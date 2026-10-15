@@ -26,8 +26,6 @@ public static class TwoGetherApi
 			return Results.Ok(new { isAuthenticated = true, userId, email = user?.Email ?? "", onboardingComplete });
 		}).AllowAnonymous();
 
-		app.MapGroup("/api/auth").RequireRateLimiting("auth").MapIdentityApi<AppUser>();
-
 		var me = app.MapGroup("/api/me").RequireAuthorization();
 		me.MapGet("/profile", GetOwnProfileAsync);
 		me.MapPut("/profile", SaveOwnProfileAsync);

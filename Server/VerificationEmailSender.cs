@@ -31,7 +31,9 @@ public sealed class VerificationEmailSender(EmailDeliveryOptions options, IWebHo
     }
 
     public Task SendPasswordResetLinkAsync(AppUser user, string email, string resetLink) => SendAsync(email, "Récupération de ton compte 2gether", $"Lien de récupération : {resetLink}", null);
-    public Task SendPasswordResetCodeAsync(AppUser user, string email, string resetCode) => SendAsync(email, "Récupération de ton compte 2gether", $"Ton code de récupération : {resetCode}\nIl expire dans une heure. Si tu n'as rien demandé, ignore ce message.", null);
+    public Task SendPasswordResetCodeAsync(AppUser user, string email, string resetCode) => SendAsync(email, "Récupération de ton compte 2gether",
+        $"Bonjour !\n\nTon code de récupération 2gether est :\n{resetCode}\n\nIl expire dans une heure et ne peut être utilisé qu'une seule fois. Si tu n'as rien demandé, ignore ce message.",
+        $"<p>Bonjour !</p><p>Ton code de récupération 2gether est :</p><p><strong>{WebUtility.HtmlEncode(resetCode)}</strong></p><p>Il expire dans une heure et ne peut être utilisé qu'une seule fois. Si tu n'as rien demandé, ignore ce message.</p>");
 
     private async Task SendAsync(string email, string subject, string text, string? html)
     {

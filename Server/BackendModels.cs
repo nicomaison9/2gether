@@ -13,6 +13,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 	public DbSet<ProfilePhoto> ProfilePhotos => Set<ProfilePhoto>();
 	public DbSet<PhotoAccessRequest> PhotoAccessRequests => Set<PhotoAccessRequest>();
 	public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
+	public DbSet<PasskeyCredential> PasskeyCredentials => Set<PasskeyCredential>();
 
 	protected override void OnModelCreating(ModelBuilder builder)
 	{
@@ -22,6 +23,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 		builder.Entity<ProfilePhoto>().HasIndex(photo => new { photo.OwnerId, photo.Visibility, photo.IsAvatar });
 		builder.Entity<PhotoAccessRequest>().HasIndex(request => new { request.OwnerId, request.RequesterId, request.CreatedAt });
 		builder.Entity<DirectMessage>().HasIndex(message => new { message.SenderId, message.RecipientId, message.SentAt });
+		builder.Entity<PasskeyCredential>().HasKey(credential => credential.CredentialId);
+		builder.Entity<PasskeyCredential>().HasIndex(credential => credential.UserId);
+		builder.Entity<PasskeyCredential>().HasOne(credential => credential.User).WithMany().HasForeignKey(credential => credential.UserId).OnDelete(DeleteBehavior.Cascade);
 	}
 }
 
@@ -84,6 +88,18 @@ public sealed class DirectMessage
 	[MaxLength(450)] public string RecipientId { get; set; } = "";
 	[Required, MaxLength(2000)] public string Text { get; set; } = "";
 	public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class PasskeyCredential
+{
+	[MaxLength(2048)] public string CredentialId { get; set; } = "";
+	[MaxLength(450)] public string UserId { get; set; } = "";
+	public AppUser User { get; set; } = null!;
+	public byte[] PublicKey { get; set; } = [];
+	public byte[] UserHandle { get; set; } = [];
+	public long SignatureCounter { get; set; }
+	public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+	public DateTimeOffset? LastUsedAt { get; set; }
 }
 
 public sealed record ProfileUpsertRequest(

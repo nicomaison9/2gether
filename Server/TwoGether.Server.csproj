@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Fido2" Version="4.3.0" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.12" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
@@ -22,5 +23,12 @@
     <Content Remove="App_Data\**" />
     <None Remove="App_Data\**" />
   </ItemGroup>
+
+  <Target Name="CopyBlazorClientAssetsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_BlazorClientPublishAsset Include="$(MSBuildProjectDirectory)\..\bin\$(Configuration)\net9.0\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_BlazorClientPublishAsset)" DestinationFolder="$(PublishDir)wwwroot/%(_BlazorClientPublishAsset.RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

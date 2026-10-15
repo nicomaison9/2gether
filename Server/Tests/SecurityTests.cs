@@ -150,6 +150,145 @@ public sealed class SecurityTests
         }
     }
 
+    [Fact]
+    public async Task Account_recovery_and_passkeys_require_valid_single_use_challenges()
+    {
+        var serverDirectory = FindServerDirectory();
+        var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-account-security-{Guid.NewGuid():N}.db");
+        var mailDirectory = databasePath + ".mail";
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        var address = new Uri($"http://127.0.0.1:{port}");
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = serverDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net9.0", "TwoGether.Server.dll"));
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        start.Environment["ASPNETCORE_URLS"] = address.ToString();
+        start.Environment["TWOGETHER_DB_PATH"] = databasePath;
+        start.Environment["Email__Delivery"] = "PickupDirectory";
+        start.Environment["Email__PublicOrigin"] = address.ToString();
+        start.Environment["Email__PickupDirectory"] = mailDirectory;
+        using var server = Process.Start(start)!;
+        server.BeginOutputReadLine();
+        server.BeginErrorReadLine();
+        try
+        {
+            using var anonymous = CreateClient(address);
+            using var owner = CreateClient(address);
+            await WaitForServerAsync(anonymous, server);
+            await CreateAccountAsync(owner, "recovery@security.invalid", mailDirectory);
+
+            var mailCount = Directory.GetFiles(mailDirectory, "*.eml").Length;
+            using var unknownRecovery = await anonymous.PostAsJsonAsync("/api/auth/forgotPassword", new { Email = "unknown@security.invalid" });
+            Assert.Equal(HttpStatusCode.OK, unknownRecovery.StatusCode);
+            Assert.Equal(mailCount, Directory.GetFiles(mailDirectory, "*.eml").Length);
+
+            using var recovery = await anonymous.PostAsJsonAsync("/api/auth/forgotPassword", new { Email = "recovery@security.invalid" });
+            Assert.Equal(HttpStatusCode.OK, recovery.StatusCode);
+            using var mail = Directory.GetFiles(mailDirectory, "*.eml")
+                .Select(path => MimeMessage.Load(path))
+                .Single(message => message.Subject == "Récupération de ton compte 2gether"
+                    && message.To.Mailboxes.Any(mailbox => mailbox.Address == "recovery@security.invalid"));
+            var codeMatch = Regex.Match(mail.TextBody ?? "", @"Ton code de récupération 2gether est\s*:\s*(?<code>\S+)");
+            Assert.True(codeMatch.Success, "Recovery email did not contain a reset code.");
+            var resetCode = codeMatch.Groups["code"].Value;
+
+            using var invalidReset = await anonymous.PostAsJsonAsync("/api/auth/resetPassword", new
+            {
+                Email = "recovery@security.invalid",
+                ResetCode = "invalid-code",
+                NewPassword = "New-security-password-123"
+            });
+            Assert.Equal(HttpStatusCode.BadRequest, invalidReset.StatusCode);
+
+            using var validReset = await anonymous.PostAsJsonAsync("/api/auth/resetPassword", new
+            {
+                Email = "recovery@security.invalid",
+                ResetCode = resetCode,
+                NewPassword = "New-security-password-123"
+            });
+            Assert.True(validReset.IsSuccessStatusCode);
+            using var replayedReset = await anonymous.PostAsJsonAsync("/api/auth/resetPassword", new
+            {
+                Email = "recovery@security.invalid",
+                ResetCode = resetCode,
+                NewPassword = "Another-password-98765"
+            });
+            Assert.Equal(HttpStatusCode.BadRequest, replayedReset.StatusCode);
+
+            using var oldPasswordLogin = await anonymous.PostAsJsonAsync("/api/auth/login?useCookies=true", new
+            {
+                Email = "recovery@security.invalid",
+                Password = "Security-check-12345"
+            });
+            Assert.Equal(HttpStatusCode.Unauthorized, oldPasswordLogin.StatusCode);
+            using var newPasswordLogin = await anonymous.PostAsJsonAsync("/api/auth/login?useCookies=true", new
+            {
+                Email = "recovery@security.invalid",
+                Password = "New-security-password-123"
+            });
+            Assert.Equal(HttpStatusCode.OK, newPasswordLogin.StatusCode);
+
+            using var unauthenticated = CreateClient(address);
+            using var unauthenticatedRegistration = await unauthenticated.PostAsync("/api/passkeys/registration/options", null);
+            Assert.Equal(HttpStatusCode.Unauthorized, unauthenticatedRegistration.StatusCode);
+            using var registrationOptionsResponse = await owner.PostAsync("/api/passkeys/registration/options", null);
+            Assert.Equal(HttpStatusCode.OK, registrationOptionsResponse.StatusCode);
+            var registrationEnvelope = await registrationOptionsResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var registrationOptions = registrationEnvelope.GetProperty("options");
+            Assert.Equal("required", registrationOptions.GetProperty("authenticatorSelection").GetProperty("residentKey").GetString());
+            Assert.Equal("required", registrationOptions.GetProperty("authenticatorSelection").GetProperty("userVerification").GetString());
+
+            var invalidCredential = new
+            {
+                id = "ZmFrZQ",
+                rawId = "ZmFrZQ",
+                type = "public-key",
+                response = new { clientDataJSON = "", attestationObject = "", transports = Array.Empty<string>() }
+            };
+            var registrationBody = new { operationId = registrationEnvelope.GetProperty("operationId").GetString(), credential = invalidCredential };
+            using var invalidRegistration = await owner.PostAsJsonAsync("/api/passkeys/registration/complete", registrationBody);
+            Assert.Equal(HttpStatusCode.BadRequest, invalidRegistration.StatusCode);
+            using var replayedRegistration = await owner.PostAsJsonAsync("/api/passkeys/registration/complete", registrationBody);
+            Assert.Equal(HttpStatusCode.BadRequest, replayedRegistration.StatusCode);
+
+            using var assertionOptionsResponse = await unauthenticated.PostAsync("/api/passkeys/login/options", null);
+            Assert.Equal(HttpStatusCode.OK, assertionOptionsResponse.StatusCode);
+            var assertionEnvelope = await assertionOptionsResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var assertionOptions = assertionEnvelope.GetProperty("options");
+            Assert.Equal("required", assertionOptions.GetProperty("userVerification").GetString());
+            Assert.Equal(0, assertionOptions.GetProperty("allowCredentials").GetArrayLength());
+            var invalidAssertionCredential = new
+            {
+                id = "ZmFrZQ",
+                rawId = "ZmFrZQ",
+                type = "public-key",
+                response = new { clientDataJSON = "", authenticatorData = "", signature = "", userHandle = (string?)null }
+            };
+            using var invalidAssertion = await unauthenticated.PostAsJsonAsync("/api/passkeys/login/complete", new
+            {
+                operationId = "not-a-live-challenge",
+                credential = invalidAssertionCredential
+            });
+            Assert.Equal(HttpStatusCode.Unauthorized, invalidAssertion.StatusCode);
+        }
+        finally
+        {
+            if (!server.HasExited) server.Kill(true);
+            await server.WaitForExitAsync();
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(databasePath + suffix);
+            if (Directory.Exists(mailDirectory)) Directory.Delete(mailDirectory, true);
+        }
+    }
+
     private static HttpClient CreateClient(Uri address) => new(new HttpClientHandler { CookieContainer = new CookieContainer(), AllowAutoRedirect = false }) { BaseAddress = address };
 
     private static async Task<string> CreateAccountAsync(HttpClient client, string email, string mailDirectory)

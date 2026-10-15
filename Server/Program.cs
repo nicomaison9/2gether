@@ -1,5 +1,6 @@
 using System.Threading.RateLimiting;
 using System.Security.Claims;
+using Fido2NetLib;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
@@ -23,6 +24,13 @@ if (!MimeKit.MailboxAddress.TryParse(emailOptions.FromAddress, out _)
 builder.Services.AddSingleton(emailOptions);
 builder.Services.AddTransient<IEmailSender<AppUser>, VerificationEmailSender>();
 builder.Services.Configure<DataProtectionTokenProviderOptions>(options => options.TokenLifespan = TimeSpan.FromHours(1));
+builder.Services.AddSingleton<IFido2>(_ => new Fido2(new Fido2Configuration
+{
+	RPID = emailOrigin.Host,
+	RPName = "2gether",
+	Origins = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { emailOrigin.GetLeftPart(UriPartial.Authority) }
+}));
+builder.Services.AddSingleton<PasskeyChallengeStore>();
 
 ImageMagick.ResourceLimits.Memory = 128 * 1024 * 1024;
 ImageMagick.ResourceLimits.Disk = 0;
@@ -67,9 +75,10 @@ builder.Services.AddRateLimiter(options =>
 {
 	options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 	options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
-		(HttpMethods.IsGet(context.Request.Method) ? "confirmation:" : "credentials:") + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown"), _ => new FixedWindowRateLimiterOptions
+		Category(context.Request) + ":" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown"), _ => new FixedWindowRateLimiterOptions
 		{
-			PermitLimit = HttpMethods.IsGet(context.Request.Method) ? 30 : 8, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
+			PermitLimit = Category(context.Request) == "confirmation" ? 30 : Category(context.Request) == "recovery" ? 5 : 8,
+			Window = TimeSpan.FromMinutes(1), QueueLimit = 0
 		}));
 	options.AddPolicy("messages", context => RateLimitPartition.GetFixedWindowLimiter(
 		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
@@ -83,21 +92,51 @@ builder.Services.AddRateLimiter(options =>
 		}));
 });
 
-var clientWwwroot = new[] { "Debug", "Release" }
-	.Select(configuration => Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "bin", configuration, "net9.0", "wwwroot")))
-	.FirstOrDefault(Directory.Exists);
-if (clientWwwroot is null)
-	throw new DirectoryNotFoundException("Blazor client output was not found. Build the solution first.");
-var sourceWwwroot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "wwwroot"));
-if (!Directory.Exists(sourceWwwroot))
-	throw new DirectoryNotFoundException($"Blazor source wwwroot was not found: {sourceWwwroot}.");
-var clientFileProvider = new CompositeFileProvider(new PhysicalFileProvider(sourceWwwroot), new PhysicalFileProvider(clientWwwroot));
+static string Category(HttpRequest request)
+{
+		if (HttpMethods.IsGet(request.Method)) return "confirmation";
+		if (request.Path.StartsWithSegments("/api/auth/forgotPassword") || request.Path.StartsWithSegments("/api/auth/resetPassword")) return "recovery";
+		if (request.Path.StartsWithSegments("/api/passkeys")) return "passkeys";
+		return "credentials";
+}
+
+var publishedWwwroot = Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
+IFileProvider clientFileProvider;
+if (File.Exists(Path.Combine(publishedWwwroot, "index.html")) && Directory.Exists(Path.Combine(publishedWwwroot, "_framework")))
+{
+	clientFileProvider = new PhysicalFileProvider(publishedWwwroot);
+}
+else
+{
+	var clientWwwroot = new[] { "Debug", "Release" }
+		.Select(configuration => Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "bin", configuration, "net9.0", "wwwroot")))
+		.FirstOrDefault(Directory.Exists);
+	if (clientWwwroot is null)
+		throw new DirectoryNotFoundException("Blazor client output was not found. Build the solution first.");
+	var sourceWwwroot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "wwwroot"));
+	if (!Directory.Exists(sourceWwwroot))
+		throw new DirectoryNotFoundException($"Blazor source wwwroot was not found: {sourceWwwroot}.");
+	clientFileProvider = new CompositeFileProvider(new PhysicalFileProvider(sourceWwwroot), new PhysicalFileProvider(clientWwwroot));
+}
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
 	var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 	await database.Database.EnsureCreatedAsync();
+	await database.Database.ExecuteSqlRawAsync("""
+		CREATE TABLE IF NOT EXISTS "PasskeyCredentials" (
+			"CredentialId" TEXT NOT NULL CONSTRAINT "PK_PasskeyCredentials" PRIMARY KEY,
+			"UserId" TEXT NOT NULL,
+			"PublicKey" BLOB NOT NULL,
+			"UserHandle" BLOB NOT NULL,
+			"SignatureCounter" INTEGER NOT NULL,
+			"CreatedAt" TEXT NOT NULL,
+			"LastUsedAt" TEXT NULL,
+			CONSTRAINT "FK_PasskeyCredentials_AspNetUsers_UserId" FOREIGN KEY ("UserId") REFERENCES "AspNetUsers" ("Id") ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS "IX_PasskeyCredentials_UserId" ON "PasskeyCredentials" ("UserId");
+		""");
 }
 
 app.Use(async (context, next) =>
@@ -127,12 +166,8 @@ var contentTypes = new FileExtensionContentTypeProvider();
 contentTypes.Mappings[".pdb"] = "application/octet-stream";
 contentTypes.Mappings[".dat"] = "application/octet-stream";
 app.UseStaticFiles(new StaticFileOptions { FileProvider = clientFileProvider, ContentTypeProvider = contentTypes });
+app.MapAuthenticationApi();
 app.MapTwoGetherApi();
-app.MapPost("/api/auth/logout", async (SignInManager<AppUser> signInManager) =>
-{
-	await signInManager.SignOutAsync();
-	return Results.NoContent();
-}).RequireAuthorization(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = clientFileProvider });
 
 app.Run();
