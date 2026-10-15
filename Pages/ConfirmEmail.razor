@@ -1,0 +1,39 @@
+@page "/confirm-email"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Confirmer mon e-mail - 2gether</PageTitle>
+<main class="onboarding-shell">
+    <header class="onboarding-brand"><span class="brand-mark" aria-hidden="true">2</span><span class="brand-wordmark"><strong>2gether</strong></span></header>
+    <section class="onboarding-card email-confirmation-card" aria-labelledby="confirmation-title">
+        <h1 id="confirmation-title">@(isLoading ? "Vérification en cours..." : isConfirmed ? "Ton adresse e-mail est confirmée" : "Ce lien ne peut pas être validé")</h1>
+        <p class="onboarding-copy" role="status">@(isLoading ? "Patiente un instant." : isConfirmed ? "Tu peux maintenant te connecter et terminer ton inscription." : "Le lien est incomplet, invalide ou expiré. Reviens à la connexion pour demander un nouveau lien avec ton adresse e-mail.")</p>
+        @if (!isLoading) { <a class="onboarding-next" href="/?login=true">@(isConfirmed ? "Me connecter" : "Demander un nouveau lien")</a> }
+    </section>
+</main>
+
+@code {
+    private bool isLoading = true;
+    private bool isConfirmed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var query = Navigation.ToAbsoluteUri(Navigation.Uri).Query;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(query))
+            {
+                using var response = await Http.GetAsync("/api/auth/confirmEmail" + query);
+                isConfirmed = response.IsSuccessStatusCode;
+            }
+        }
+        catch (HttpRequestException) { }
+        finally { isLoading = false; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await JS.InvokeVoidAsync("registrationGuidance.clearConfirmationQuery");
+    }
+}

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>2gether</title>
+    <base href="/" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/svg+xml" href="icon-2gether.svg" />
+    <link href="manifest.webmanifest" rel="manifest" />
+    <link rel="apple-touch-icon" sizes="512x512" href="icon-512.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png" />
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        Une erreur est survenue.
+        <a href="." class="reload">Recharger</a>
+        <span class="dismiss">×</span>
+    </div>
+    <script>
+        window.registrationGuidance = {
+            clearConfirmationQuery: () => history.replaceState(null, '', location.pathname),
+            focusField: id => {
+                const field = document.getElementById(id);
+                if (field) {
+                    field.focus();
+                    field.scrollIntoView({ block: 'nearest' });
+                }
+            }
+        };
+        window.chatViewport = {
+            isNearLatest: () => {
+                const log = document.querySelector('.chat-messages');
+                return !log || log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+            },
+            scrollToLatest: () => {
+                const log = document.querySelector('.chat-messages');
+                if (log) log.scrollTop = log.scrollHeight;
+            }
+        };
+        window.deviceLocation = {
+            getCurrentPosition: () => new Promise(resolve => {
+                if (!navigator.geolocation) {
+                    resolve({ success: false, errorCode: 0 });
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    position => resolve({
+                        success: true,
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracyMeters: position.coords.accuracy
+                    }),
+                    error => resolve({ success: false, errorCode: error.code }),
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+                );
+            })
+        };
+        window.photoLibrary = {
+            compressDataUrl: (source, maxEdge, quality) => new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onerror = () => reject(new Error('Image illisible'));
+                image.onload = () => {
+                    const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(image.width * scale));
+                    canvas.height = Math.max(1, Math.round(image.height * scale));
+                    const context = canvas.getContext('2d');
+                    if (!context) {
+                        reject(new Error('Canvas indisponible'));
+                        return;
+                    }
+                    context.fillStyle = '#ffffff';
+                    context.fillRect(0, 0, canvas.width, canvas.height);
+                    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                image.src = source;
+            })
+        };
+    </script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="js/profile-map.js"></script>
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script>navigator.serviceWorker.register('service-worker.js');</script>
+</body>
+
+</html>

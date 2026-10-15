@@ -1,0 +1,1367 @@
+@page "/"
+@implements IAsyncDisposable
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject IJSRuntime JS
+@inject HttpClient Http
+@inject HttpClient Http
+
+<PageTitle>2gether - rencontres de quartier</PageTitle>
+
+<div class="dating-app">
+	@if (!state.OnboardingComplete)
+	{
+		<main class="onboarding-shell">
+			<header class="onboarding-brand"><span class="brand-mark" aria-hidden="true">2</span><span class="brand-wordmark"><strong>2gether</strong></span><span class="onboarding-urban">RENCONTRES DE QUARTIER</span></header>
+			<div class="onboarding-layout">
+				<aside class="onboarding-aside"><p class="eyebrow">UNE INSCRIPTION, PUIS TA VILLE</p><h1>Rencontre<br />à ton rythme.</h1><p>Quelques repères pour faire remonter les personnes qui te ressemblent, près de toi.</p><span class="onboarding-aside-mark" aria-hidden="true">2</span></aside>
+				<section class="onboarding-card" aria-labelledby="onboarding-title" @onkeydown="HandleRegistrationKeyDown">
+					<div class="onboarding-progress-label"><span>ÉTAPE @(onboardingStep + 1) SUR 4</span><span>@(onboardingStep switch { 0 => "Compte", 1 => "Passions", 2 => "Localisation", _ => "Profil" })</span></div>
+					<div class="onboarding-progress" role="progressbar" aria-label="Progression de l'inscription" aria-valuemin="1" aria-valuemax="4" aria-valuenow="@(onboardingStep + 1)">@for (var stepIndex = 0; stepIndex < 4; stepIndex++) { <span class="@(stepIndex <= onboardingStep ? "complete" : "")"></span> }</div>
+
+					@if (onboardingStep == 0 && awaitingEmailConfirmation)
+					{
+						<div class="onboarding-step"><p class="eyebrow">UNE DERNIÈRE VÉRIFICATION</p><h2 id="onboarding-title">Vérifie ton adresse e-mail</h2><p class="onboarding-copy">Un lien de confirmation a été demandé pour <strong>@state.AccountEmail</strong>. Ouvre le message de 2gether et choisis « Confirmer mon adresse e-mail », puis reviens te connecter.</p><p class="onboarding-copy">Le lien est valable une heure. Si tu ne trouves pas le message, regarde dans les courriers indésirables.</p>
+							@if (localEmailDelivery) { <p class="registration-step-status">Mode local : le message de test est enregistré sur ce PC. Aucun e-mail n'est envoyé sur Internet.</p> }
+							@if (!string.IsNullOrWhiteSpace(onboardingFeedback)) { <p class="onboarding-feedback" role="status">@onboardingFeedback</p> }
+							<div class="onboarding-actions"><button type="button" class="onboarding-next" @onclick="ReturnToVerifiedLogin">J'ai confirmé, me connecter</button><button type="button" class="onboarding-back" @onclick="ResendVerificationAsync" disabled="@(isSubmittingRegistration || DateTimeOffset.UtcNow < verificationResendAt)">@(isSubmittingRegistration ? "Envoi..." : DateTimeOffset.UtcNow < verificationResendAt ? "Patiente quelques secondes avant le renvoi" : "Renvoyer le lien")</button><button type="button" class="onboarding-back" @onclick="CorrectRegistrationEmail">Corriger mon adresse e-mail</button></div>
+						</div>
+					}
+					else if (onboardingStep == 0)
+					{
+						<form class="onboarding-step" @onsubmit="ContinueFromAccountAsync" @onsubmit:preventDefault novalidate><p class="eyebrow">BIENVENUE SUR 2GETHER</p><h2 id="onboarding-title">On fait connaissance ?</h2><p class="onboarding-copy">@(accountMode == "create" ? "Trois informations pour créer ton compte. Tous les champs ci-dessous sont nécessaires." : "Retrouve ton compte avec ton adresse e-mail et ton mot de passe.")</p>
+							<div class="account-mode-switch"><button type="button" class="@(accountMode == "create" ? "selected" : "")" @onclick="ChooseCreateAccount">Créer un compte</button><button type="button" class="@(accountMode == "existing" ? "selected" : "")" @onclick="ChooseExistingAccount">J'ai déjà un compte</button></div>
+							<div class="onboarding-field"><label for="registration-email">Adresse e-mail <span class="field-required">Obligatoire</span></label><input id="registration-email" type="email" @bind="state.AccountEmail" @bind:event="oninput" @onfocus='() => ShowRegistrationHelp("email")' @onblur='() => LeaveRegistrationField("email")' aria-invalid='@RegistrationInvalid("email")' aria-describedby='@RegistrationDescription("email")' placeholder="Exemple : lea@exemple.fr" autocomplete="email" required />@RegistrationHelp("email")</div>
+							<div class="onboarding-field"><label for="registration-password">Mot de passe <span class="field-required">Obligatoire</span></label><div class="registration-password-wrap"><input id="registration-password" type="@(showRegistrationPassword ? "text" : "password")" @bind="onboardingPassword" @bind:event="oninput" @onfocus='() => ShowRegistrationHelp("password")' @onblur='() => LeaveRegistrationField("password")' aria-invalid='@RegistrationInvalid("password")' aria-describedby='@RegistrationDescription("password")' autocomplete="@(accountMode == "create" ? "new-password" : "current-password")" required /><button type="button" @onclick="ToggleRegistrationPassword" aria-label="@(showRegistrationPassword ? "Masquer le mot de passe" : "Afficher le mot de passe")" aria-pressed="@showRegistrationPassword" title="@(showRegistrationPassword ? "Masquer le mot de passe" : "Afficher le mot de passe")"><span aria-hidden="true">@(showRegistrationPassword ? "◉" : "◎")</span></button></div>@RegistrationHelp("password")</div>
+							@if (accountMode == "create") { <div class="onboarding-field"><label for="registration-name">Prénom ou surnom <span class="field-required">Obligatoire</span></label><input id="registration-name" @bind="state.Name" @bind:event="oninput" @onfocus='() => ShowRegistrationHelp("name")' @onblur='() => LeaveRegistrationField("name")' aria-invalid='@RegistrationInvalid("name")' aria-describedby='@RegistrationDescription("name")' maxlength="32" autocomplete="given-name" placeholder="Exemple : Léa" required />@RegistrationHelp("name")</div> }
+							<p class="onboarding-privacy">Ton adresse e-mail et ton mot de passe ne sont pas affichés aux autres membres.</p>
+							@if (!string.IsNullOrWhiteSpace(onboardingFeedback)) { <p class="onboarding-feedback" role="alert">@onboardingFeedback</p> }
+							@if (accountMode == "existing") { <button class="onboarding-back" type="button" @onclick="ResendVerificationAsync" disabled="@(isSubmittingRegistration || DateTimeOffset.UtcNow < verificationResendAt)">Renvoyer le lien de vérification</button> }
+							<button class="onboarding-next" type="submit" disabled="@isSubmittingRegistration">@(isSubmittingRegistration ? "Connexion en cours..." : accountMode == "create" ? "Créer mon compte et continuer" : "Me connecter") <span aria-hidden="true">→</span></button>
+						</form>
+					}
+					else if (onboardingStep == 1)
+					{
+						<div class="onboarding-step"><p class="eyebrow">LES GRANDES LIGNES SUFFISENT</p><h2 id="onboarding-title">Qu’est-ce qui t’anime ?</h2><p class="onboarding-copy">Qu'aimes-tu faire ? Choisis au moins une activité, par exemple le cinéma ou les balades. Tu peux en choisir jusqu'à 10.</p>
+							<div class="onboarding-affinity-count"><span>@state.Interests.Count / 10</span> passions choisies</div>
+							<p class="registration-step-status" role="status">@(SelectedAffinityTopicIds.Count == 0 ? "Il manque une activité qui te plaît pour continuer." : "C'est bon, tu peux continuer.")</p>
+							<div class="onboarding-affinity-tools"><label class="sr-only" for="onboarding-passion-search">Rechercher une passion</label><input id="onboarding-passion-search" @bind="onboardingTopicSearch" @bind:event="oninput" @bind:after="ResetOnboardingTopicResults" @onfocus='() => ShowRegistrationHelp("passion-search")' @onblur='() => LeaveRegistrationField("passion-search")' aria-describedby='@(activeRegistrationField == "passion-search" ? "registration-passion-help" : null)' placeholder="Exemple : cinéma, cuisine..." /><label class="sr-only" for="onboarding-passion-category">Filtrer les passions par catégorie</label><select id="onboarding-passion-category" @bind="onboardingTopicCategory" @bind:after="ResetOnboardingTopicResults">@foreach (var category in AffinityReasonCatalog.Categories) { <option value="@category">@category</option> }</select></div>
+							@if (activeRegistrationField == "passion-search") { <div id="registration-passion-help" class="registration-help is-open" role="status">Écris un mot, puis sélectionne une activité dans les résultats. Rechercher ne sélectionne pas une activité.</div> }
+							<div class="onboarding-passion-list">@foreach (var topic in VisibleOnboardingTopics) { <button type="button" class="onboarding-passion @(state.Interests.Contains(topic.Id) ? "chosen" : "")" aria-pressed="@state.Interests.Contains(topic.Id)" @onclick="() => ToggleOnboardingTopicAsync(topic.Id)"><span>@topic.Id</span><i aria-hidden="true">✓</i></button> }</div>
+							@if (!VisibleOnboardingTopics.Any()) { <p class="onboarding-feedback" role="status">Aucune activité trouvée. Essaie un autre mot ou choisis « Toutes les catégories ».</p> }
+							@if (VisibleOnboardingTopics.Count() < FilteredOnboardingTopics.Count()) { <button class="onboarding-show-more" type="button" @onclick="ShowMoreOnboardingTopics">Afficher les passions suivantes</button> }
+							@if (!string.IsNullOrWhiteSpace(onboardingFeedback)) { <p class="onboarding-feedback" role="status">@onboardingFeedback</p> }
+							<div class="onboarding-actions"><button class="onboarding-back" type="button" @onclick="GoToAccountStep">Retour</button><button class="onboarding-next" type="button" @onclick="ContinueFromPassionsAsync">Continuer <span aria-hidden="true">→</span></button></div>
+						</div>
+					}
+					else if (onboardingStep == 2)
+					{
+						<div class="onboarding-step"><p class="eyebrow">À PROXIMITÉ, À TON CHOIX</p><h2 id="onboarding-title">Où te trouver ?</h2><p class="onboarding-copy">La position de ton téléphone permet de trouver des personnes dans ton quartier. Les autres membres ne voient qu'une zone approximative, jamais tes coordonnées GPS exactes.</p><p class="registration-step-status">Cette étape est facultative. Sans position, les profils proches ne pourront pas encore être affichés ; tu pourras l'ajouter plus tard.</p>
+							<div class="onboarding-location-panel"><span class="onboarding-location-icon"><span class="location-pin"></span></span><div><strong>Position de cet appareil</strong><p>@(state.Latitude is null ? "Pas encore partagée" : $"Position enregistrée · précision ±{state.LocationAccuracyMeters:0} m")</p></div></div>
+							@if (!string.IsNullOrWhiteSpace(locationFeedback)) { <p class="onboarding-feedback" role="status">@locationFeedback</p> }
+							<button class="onboarding-gps-button" type="button" @onclick="RequestLocationAsync" disabled="@isLocating">@(isLocating ? "Recherche en cours..." : state.Latitude is null ? "Autoriser le GPS" : "Actualiser ma position")</button>
+							<div class="onboarding-actions"><button class="onboarding-back" type="button" @onclick="GoToPassionsStep">Retour</button><button class="onboarding-next" type="button" @onclick="ContinueToProfileStep">Continuer <span aria-hidden="true">→</span></button><button class="onboarding-skip" type="button" @onclick="ContinueToProfileStep">Plus tard</button></div>
+						</div>
+					}
+					else
+					{
+						<form class="onboarding-step" @onsubmit="CompleteOnboardingAsync" @onsubmit:preventDefault novalidate><p class="eyebrow">LES DERNIERS REPÈRES</p><h2 id="onboarding-title">Ton profil, tes mots.</h2><p class="onboarding-copy">Remplis ces quatre champs. Tu peux choisir de ne pas préciser ton genre ou ton orientation.</p>
+							<div class="onboarding-field"><label for="registration-age">Ton âge en années <span class="field-required">Obligatoire</span></label><input id="registration-age" inputmode="numeric" @bind="registrationAge" @bind:event="oninput" @onfocus='() => ShowRegistrationHelp("age")' @onblur='() => LeaveRegistrationField("age")' aria-invalid='@RegistrationInvalid("age")' aria-describedby='@RegistrationDescription("age")' maxlength="3" placeholder="Exemple : 28" required />@RegistrationHelp("age")</div>
+							<div class="onboarding-field"><label for="registration-gender">Ton genre <span class="field-required">Une réponse au choix</span></label><select id="registration-gender" @bind="state.Gender" @onfocus='() => ShowRegistrationHelp("gender")' @onblur='() => LeaveRegistrationField("gender")' aria-invalid='@RegistrationInvalid("gender")' aria-describedby='@RegistrationDescription("gender")' required><option value="">Choisir une réponse</option><option>Femme</option><option>Homme</option><option>Non-binaire</option><option>Autre</option><option>Je préfère ne pas préciser</option></select>@RegistrationHelp("gender")</div>
+							<div class="onboarding-field"><label for="registration-orientation">Ton orientation sexuelle <span class="field-required">Une réponse au choix</span></label><select id="registration-orientation" @bind="state.SexualOrientation" @onfocus='() => ShowRegistrationHelp("orientation")' @onblur='() => LeaveRegistrationField("orientation")' aria-invalid='@RegistrationInvalid("orientation")' aria-describedby='@RegistrationDescription("orientation")' required><option value="">Choisir une réponse</option><option>Hétérosexuelle</option><option>Homosexuelle</option><option>Bisexuelle</option><option>Pansexuelle</option><option>Asexuelle</option><option>Queer</option><option>Autre</option><option>Je préfère ne pas préciser</option></select>@RegistrationHelp("orientation")</div>
+							<div class="onboarding-field"><label for="registration-biography">Une phrase sur toi <span class="field-required">Obligatoire</span></label><textarea id="registration-biography" @bind="state.About" @bind:event="oninput" @onfocus='() => ShowRegistrationHelp("biography")' @onblur='() => LeaveRegistrationField("biography")' aria-invalid='@RegistrationInvalid("biography")' aria-describedby='@RegistrationDescription("biography")' maxlength="600" rows="3" placeholder="Exemple : J'aime les balades et discuter autour d'un café." required></textarea><small>@state.About.Length / 600</small>@RegistrationHelp("biography")<button class="onboarding-skip registration-bio-later" type="button" @onclick="DeferBiography">Je préfère me présenter dans la conversation</button></div>
+							<p class="onboarding-privacy">Ces informations sont enregistrées sur ton compte. Les réponses de ton profil peuvent être consultées par les autres membres ; ne mets pas ton adresse ou ton numéro de téléphone dans ta présentation.</p>
+							@if (!string.IsNullOrWhiteSpace(onboardingFeedback)) { <p class="onboarding-feedback" role="alert">@onboardingFeedback</p> }
+							<div class="onboarding-actions"><button class="onboarding-back" type="button" @onclick="GoToLocationStep">Retour</button><button class="onboarding-next" type="submit" disabled="@isSubmittingRegistration">@(isSubmittingRegistration ? "Enregistrement..." : "Terminer et découvrir") <span aria-hidden="true">→</span></button></div>
+						</form>
+					}
+					<p class="onboarding-demo-note">Tes informations de profil et tes passions seront enregistrées sur ton compte.</p>
+				</section>
+			</div>
+		</main>
+	}
+	else
+	{
+	<aside class="sidebar">
+		<a class="brand" href="/" aria-label="2gether, accueil">
+			<span class="brand-mark" aria-hidden="true">2</span>
+			<span class="brand-wordmark"><strong>2gether</strong></span>
+		</a>
+		<div class="nav-label">FAIRE DES RENCONTRES</div>
+		<nav class="side-nav" aria-label="Navigation principale">
+			<button class="nav-item @(activePage is "discover" or "profile-detail" ? "selected" : "")" @onclick="ShowDiscover"><span class="nav-symbol discover-symbol"></span><span>Découvrir</span><span class="nav-count">@VisibleProfiles.Count()</span></button>
+			<button class="nav-item @(activePage == "map" ? "selected" : "")" @onclick="ShowMap"><span class="nav-symbol map-symbol"></span><span>Carte</span></button>
+			<button class="nav-item @(activePage == "messages" ? "selected" : "")" @onclick="ShowMessages"><span class="nav-symbol messages-symbol"></span><span>Messages</span><span class="nav-count">@state.Conversations.Count</span></button>
+			<button class="nav-item @(activePage == "profile" ? "selected" : "")" @onclick="ShowProfile"><span class="nav-symbol profile-symbol"></span><span>Mon profil</span></button>
+		</nav>
+		<div class="sidebar-bottom">
+			<div class="privacy-note"><span class="privacy-mark">i</span><p><strong>À toi de choisir.</strong><br />Le GPS ne s'active qu'avec ton accord.</p></div>
+			<span class="demo-label">VERSION DE DÉMONSTRATION</span>
+		</div>
+	</aside>
+
+	<main class="main-content">
+		<header class="mobile-header">
+			<a class="brand" href="/" aria-label="2gether, accueil"><span class="brand-mark" aria-hidden="true">2</span><span class="brand-wordmark"><strong>2gether</strong></span></a>
+			<button class="mobile-location" @onclick="ShowProfile" aria-label="Modifier mon secteur"><span class="location-pin"></span>@state.City</button>
+		</header>
+
+		<div class="content-wrap">
+			<div class="page-topline"><span class="mode-label"><span class="mode-dot"></span> @(isAuthenticated ? "Ton quartier · distances approximatives" : "Démo · localisations fictives")</span><button class="location-button" @onclick="ShowProfile"><span class="location-pin"></span><span>@state.City</span><span class="location-divider"></span><span>Rayon @state.RadiusKm km</span><span class="edit-mark" aria-hidden="true">↗</span></button></div>
+
+			@if (activePage == "discover")
+			{
+				<section class="discover-view">
+					<header class="discover-heading"><div><p class="eyebrow">DES AFFINITÉS, JUSTE À CÔTÉ</p><h1>Les belles rencontres<br /><em>ne sont pas si loin.</em></h1><p class="intro-copy">Des personnes qui te ressemblent, dans ton secteur.</p></div><div class="meet-note"><span class="meet-spark" aria-hidden="true">✳</span><span>Moins de swipe.<br /><strong>Plus de vrai.</strong></span></div></header>
+					<details class="affinity-disclosure"><summary>Mes affinités <span>@SelectedAffinityCount sélectionnées</span></summary>
+					<section class="affinity-section" aria-label="Choisir mes raisons d'affinité">
+						<div class="affinity-heading"><div><span class="eyebrow">CE QUI TE FAIT VIBRER</span><p>Choisis tes raisons d'affinité</p></div><span class="affinity-hint">@SelectedAffinityCount sélectionnées · @AffinityReasonCatalog.Reasons.Count raisons</span></div>
+						<div class="affinity-browser-controls"><label class="affinity-search"><span class="sr-only">Rechercher une raison d'affinité</span><input @bind="affinitySearch" @bind:event="oninput" @bind:after="ResetAffinityResults" placeholder="Rechercher une passion, une envie..." /></label><label class="affinity-category"><span class="sr-only">Filtrer par catégorie</span><select @bind="selectedAffinityCategory" @bind:after="ResetAffinityResults">@foreach (var category in AffinityReasonCatalog.Categories) { <option value="@category">@category</option> }</select></label></div>
+						<div class="affinity-reason-grid">@foreach (var reason in VisibleAffinityReasons) { <button type="button" class="affinity-reason @(state.AffinityReasonIds.Contains(reason.Id) ? "selected" : "")" aria-pressed="@state.AffinityReasonIds.Contains(reason.Id)" @onclick="() => ToggleAffinityReasonAsync(reason.Id)"><span class="reason-category">@reason.Category</span><span class="reason-text">@reason.Text</span><span class="reason-check" aria-hidden="true">✓</span></button> }</div>
+						@if (!VisibleAffinityReasons.Any()) { <p class="affinity-no-results">Aucune raison trouvée. Essaie un autre mot ou une autre catégorie.</p> }
+						@if (VisibleAffinityReasonCount < FilteredAffinityReasonCount) { <button type="button" class="affinity-more-button" @onclick="ShowMoreAffinityReasons">Afficher les raisons suivantes <span>@(FilteredAffinityReasonCount - VisibleAffinityReasonCount) restantes</span></button> }
+						<div class="interest-list quick-interests">@foreach (var interest in AllInterests) { <button class="interest-chip @(state.Interests.Contains(interest) ? "active" : "")" @onclick="() => ToggleInterestAsync(interest)">@interest</button> }</div>
+					</section>
+					</details>
+
+					<div class="results-heading"><div><h2>Près de toi <span class="result-count">@VisibleProfiles.Count()</span></h2><p>Le courant passe déjà sur quelques sujets.</p></div></div>
+					<div class="profile-view-toolbar">
+						<label class="radius-control"><span>À moins de</span><select @bind="state.RadiusKm" @bind:after="SaveStateAsync"><option value="1">1 km</option><option value="2">2 km</option><option value="5">5 km</option><option value="10">10 km</option><option value="25">25 km</option><option value="50">50 km</option></select></label>
+						<div class="profile-display-control" role="group" aria-label="Présentation des profils">
+							<button type="button" class="display-mode-button @(state.ProfileDisplayMode == "small" ? "active" : "")" aria-label="Petites miniatures" aria-pressed="@(state.ProfileDisplayMode == "small")" title="Petites miniatures" @onclick="SetSmallDisplayModeAsync"><span class="display-glyph glyph-small" aria-hidden="true"></span></button>
+							<button type="button" class="display-mode-button @(state.ProfileDisplayMode == "medium" ? "active" : "")" aria-label="Miniatures moyennes" aria-pressed="@(state.ProfileDisplayMode == "medium")" title="Miniatures moyennes" @onclick="SetMediumDisplayModeAsync"><span class="display-glyph glyph-medium" aria-hidden="true"></span></button>
+							<button type="button" class="display-mode-button @(state.ProfileDisplayMode == "large" ? "active" : "")" aria-label="Grandes miniatures" aria-pressed="@(state.ProfileDisplayMode == "large")" title="Grandes miniatures" @onclick="SetLargeDisplayModeAsync"><span class="display-glyph glyph-large" aria-hidden="true"></span></button>
+							<button type="button" class="display-mode-button @(state.ProfileDisplayMode == "list" ? "active" : "")" aria-label="Affichage en liste" aria-pressed="@(state.ProfileDisplayMode == "list")" title="Affichage en liste" @onclick="SetListDisplayModeAsync"><span class="display-glyph glyph-list" aria-hidden="true"></span></button>
+						</div>
+					</div>
+
+					@if (VisibleProfiles.Any())
+					{
+						<div class="profile-grid view-@state.ProfileDisplayMode">
+							@foreach (var profile in VisibleProfiles)
+							{
+								<article class="profile-card" @key="profile.Id">
+										<div class="profile-photo-wrap"><button class="profile-photo-open" @onclick="() => OpenProfileAsync(profile.Id)" aria-label="Voir le profil détaillé de @profile.Name"><img class="profile-photo" src="@profile.PhotoUrl" alt="Portrait de @profile.Name" loading="lazy" /></button><div class="photo-topline"><span class="affinity-badge"><span class="affinity-star" aria-hidden="true">✳</span> @AffinityLabel(profile)</span><span class="online-mark"><span></span> @(profile.IsDemo ? "Profil démo" : "Membre 2gether")</span></div><div class="photo-gradient"></div><div class="photo-caption"><span class="distance-badge"><span class="location-pin"></span>@DistanceFromUser(profile).ToString("0.0") km · @profile.Area</span></div></div>
+									<div class="profile-info">
+										<div class="profile-title-row"><button class="profile-name-button" @onclick="() => OpenProfileAsync(profile.Id)"><h3>@profile.Name, @profile.Age <span aria-hidden="true">↗</span></h3></button><span class="profile-pronouns">@profile.Occupation</span></div>
+										<p class="profile-bio">@profile.Bio</p>
+										<div class="profile-interests">@foreach (var interest in profile.Interests) { <span class="profile-interest @(state.Interests.Contains(interest) ? "shared" : "")">@interest</span> }</div>
+										<div class="profile-actions"><button class="pass-button" title="Masquer ce profil" aria-label="Masquer @profile.Name" @onclick="() => HideProfileAsync(profile.Id)">×</button><button class="message-button" @onclick="() => StartConversationAsync(profile.Id)"><span aria-hidden="true">↗</span> Dire bonjour</button><button class="like-button @(state.LikedProfileIds.Contains(profile.Id) ? "liked" : "")" aria-label="@(state.LikedProfileIds.Contains(profile.Id) ? $"Retirer le like de {profile.Name}" : $"Aimer le profil de {profile.Name}")" @onclick="() => ToggleLikeAsync(profile.Id)"><span aria-hidden="true">♥</span></button></div>
+									</div>
+								</article>
+							}
+						</div>
+					}
+					else
+					{
+						<div class="empty-discovery"><span class="empty-symbol" aria-hidden="true">⌖</span><h3>Un peu plus loin ?</h3><p>Aucun profil ne correspond à ce rayon. Élargis la recherche.</p><button class="text-button" @onclick="ResetFiltersAsync">Élargir à 25 km <span aria-hidden="true">→</span></button></div>
+					}
+					@if (VisibleProfiles.Any(profile => profile.IsDemo)) { <p class="demo-disclaimer">Les profils et leurs coordonnées sont fictifs. Avec le GPS, les distances comparent ta position aux coordonnées d'exemple.</p> }
+				</section>
+			}
+			else if (activePage == "map")
+			{
+				<section class="map-view">
+					<header class="map-heading"><div><p class="eyebrow">EXPLORER TON QUARTIER</p><h1>La carte des rencontres.</h1><p>Déplace la carte, zoome et sélectionne un marqueur pour voir le profil.</p></div><span class="map-result-count">@VisibleProfiles.Count() profils</span></header>
+					<div class="map-legend"><span><i class="map-legend-profile"></i> Profil</span>@if (state.Latitude is not null) { <span><i class="map-legend-you"></i> Ta position</span> }<span class="map-radius-note">Rayon actif : @state.RadiusKm km</span></div>
+					<div id="profile-map" class="profile-map" role="application" aria-label="Carte interactive des profils à proximité"></div>
+					<p class="map-disclaimer">Les marqueurs de profils sont des coordonnées fictives. La carte et les tuiles nécessitent une connexion Internet.</p>
+				</section>
+			}
+			else if (activePage == "profile-detail")
+			{
+				var profile = FindProfile(selectedProfileId);
+				if (profile is not null)
+				{
+					<section class="profile-detail-view">
+						<button class="back-link" @onclick="ShowDiscover"><span aria-hidden="true">←</span> Retour aux profils</button>
+						<div class="profile-detail-layout">
+							<div class="detail-photo-panel"><img src="@profile.PhotoUrl" alt="Portrait de @profile.Name" /><span class="detail-photo-caption">Profil de démonstration</span></div>
+							<div class="detail-content"><p class="eyebrow">UNE PERSONNE, BIEN PLUS QU'UNE PHOTO</p><h1>@profile.Name, @profile.Age</h1><p class="detail-occupation">@profile.Occupation <span>·</span> @profile.Education</p>
+								<div class="detail-distance"><span class="location-pin"></span>@profile.Area · @DistanceFromUser(profile).ToString("0.0") km <span>@DistanceOriginLabel</span></div>
+								<section class="detail-section"><h2>À propos</h2><p>@profile.About</p></section>
+								@if (selectedProfilePhotos.Any(photo => photo.Visibility == 0)) { <section class="detail-section"><h2>Photos publiques</h2><div class="visitor-photo-grid">@foreach (var photo in selectedProfilePhotos.Where(photo => photo.Visibility == 0)) { <img src="@photo.DataUrl" alt="Photo publique de @profile.Name" /> }</div></section> }
+								@if (profile.PrivatePhotoCount > 0)
+								{
+									<section class="detail-section"><h2>Photos privées</h2>
+										@if (selectedProfilePhotos.Any(photo => photo.Visibility == 1)) { <div class="visitor-photo-grid">@foreach (var photo in selectedProfilePhotos.Where(photo => photo.Visibility == 1)) { <img src="@photo.DataUrl" alt="Photo privée de @profile.Name" /> }</div> }
+										else { <div class="private-lock-panel"><span aria-hidden="true">▣</span><p>@(profile.HasPendingPhotoRequest ? "Ta demande est en attente d'approbation." : "Ces photos sont visibles uniquement avec l'accord du propriétaire.")</p><button type="button" class="photo-request-button" @onclick="() => RequestPrivatePhotoAccessAsync(profile.Id)" disabled="@profile.HasPendingPhotoRequest">@(profile.HasPendingPhotoRequest ? "Demande envoyée" : "Demander l'accès")</button></div> }
+									</section>
+								}
+								<section class="detail-section"><h2>Ses affinités</h2><div class="detail-tags">@foreach (var interest in profile.Interests) { <span class="profile-interest @(SelectedAffinityTopicIds.Contains(interest) ? "shared" : "")">@interest</span> }</div></section>
+								<div class="detail-facts"><div><span>Langues</span><strong>@profile.Languages</strong></div><div><span>Style de vie</span><strong>@profile.Lifestyle</strong></div><div><span>Son intention</span><strong>@profile.Intent</strong></div><div><span>Ce qui lui correspond</span><strong>@profile.LookingFor</strong></div></div>
+								<div class="detail-actions"><button class="message-button" @onclick="() => StartConversationAsync(profile.Id)"><span aria-hidden="true">↗</span> Dire bonjour</button><button class="like-button @(state.LikedProfileIds.Contains(profile.Id) ? "liked" : "")" aria-label="Aimer le profil de @profile.Name" @onclick="() => ToggleLikeAsync(profile.Id)"><span aria-hidden="true">♥</span></button></div>
+								<p class="detail-location-note">La distance GPS est arrondie. Les coordonnées affichées appartiennent à un profil fictif.</p>
+							</div>
+						</div>
+					</section>
+				}
+			}
+			else if (activePage == "messages")
+			{
+				<section class="messages-view"><header class="subpage-heading"><p class="eyebrow">PRENDRE LE TEMPS DE SE PARLER</p><h1>Les conversations.</h1><p>Un premier message, et la suite vous appartient.</p></header>
+					<div class="messages-layout @(ActiveConversation is null ? "no-conversation" : "has-conversation")">
+						<aside class="conversation-list" aria-label="Mes conversations"><div class="conversation-list-heading"><h2>Messages</h2><span>@state.Conversations.Count</span></div>
+							@if (state.Conversations.Count == 0) { <div class="conversation-empty"><span class="empty-symbol" aria-hidden="true">↗</span><p>Pas encore de conversation.</p><button class="text-button" @onclick="ShowDiscover">Découvrir les profils <span aria-hidden="true">→</span></button></div> }
+							@foreach (var conversation in state.Conversations.OrderByDescending(item => item.Messages.LastOrDefault()?.SentAt))
+							{
+								var profile = FindProfile(conversation.ProfileId);
+								var displayName = profile?.Name ?? conversation.ProfileName;
+								var photoUrl = profile?.PhotoUrl ?? CreateProfilePlaceholder(displayName);
+								<button class="conversation-row @(activeConversationId == conversation.ProfileId ? "active" : "")" @onclick="() => OpenConversationAsync(conversation.ProfileId)"><img src="@photoUrl" alt="" /><span class="conversation-copy"><strong>@displayName</strong><span>@(messageDrafts.TryGetValue(conversation.ProfileId, out var draft) && !string.IsNullOrWhiteSpace(draft) ? $"Brouillon : {draft}" : conversation.Messages.LastOrDefault()?.Text ?? "La conversation commence ici")</span></span><span class="conversation-chevron">›</span></button>
+							}
+						</aside>
+						<section class="chat-panel">
+							@if (ActiveConversation is not null && ActiveProfile is not null)
+							{
+								<header class="chat-header"><button class="chat-back" @onclick="CloseConversation" aria-label="Retour aux conversations">←</button><img src="@ActiveProfile.PhotoUrl" alt="" /><div><strong>@ActiveProfile.Name</strong><span>@ActiveProfile.Area · @(ActiveProfile.IsDemo ? "Profil démo" : "Membre 2gether")</span></div><button class="chat-refresh" type="button" @onclick="() => OpenConversationAsync(activeConversationId)" disabled="@isSendingMessage" aria-label="Actualiser la conversation" title="Actualiser la conversation">↻</button></header>
+								<details class="chat-person-details" @key="activeConversationId"><summary>Profil de @ActiveProfile.Name <span>@(ActiveProfile.Age > 0 ? $"{ActiveProfile.Age} ans · " : "")@ActiveProfile.Area</span></summary><div class="chat-person-body">
+									@if (!string.IsNullOrWhiteSpace(ActiveProfile.About)) { <p>@ActiveProfile.About</p> }
+									<dl class="chat-facts">@if (!string.IsNullOrWhiteSpace(ActiveProfile.Occupation)) { <div><dt>Activité</dt><dd>@ActiveProfile.Occupation</dd></div> }@if (!string.IsNullOrWhiteSpace(ActiveProfile.Intent)) { <div><dt>Recherche</dt><dd>@ActiveProfile.Intent</dd></div> }@if (!string.IsNullOrWhiteSpace(ActiveProfile.Languages)) { <div><dt>Langues</dt><dd>@ActiveProfile.Languages</dd></div> }@if (!string.IsNullOrWhiteSpace(ActiveProfile.Lifestyle)) { <div><dt>Mode de vie</dt><dd>@ActiveProfile.Lifestyle</dd></div> }</dl>
+									<div class="profile-interests">@foreach (var interest in ActiveProfile.Interests) { <span class="profile-interest @(SelectedAffinityTopicIds.Contains(interest) ? "shared" : "")">@interest</span> }</div>
+									@if (chatProfilePhotos.Count > 0) { <div class="chat-photo-strip">@foreach (var photo in chatProfilePhotos) { <a href="@photo.DataUrl" target="_blank" rel="noopener" aria-label="Agrandir une photo de @ActiveProfile.Name"><img src="@photo.DataUrl" alt="Photo de @ActiveProfile.Name" loading="lazy" /></a> }</div> }
+									@if (ActiveProfile.PrivatePhotoCount > 0 && !chatProfilePhotos.Any(photo => photo.Visibility == 1)) { <button type="button" class="photo-request-button" @onclick="() => RequestPrivatePhotoAccessAsync(activeConversationId)" disabled="@ActiveProfile.HasPendingPhotoRequest">@(ActiveProfile.HasPendingPhotoRequest ? "Accès aux photos en attente" : "Demander les photos privées")</button> }
+								</div></details>
+								@if (SharedChatInterests.Any()) { <div class="chat-common-ground"><strong>En commun</strong>@foreach (var interest in SharedChatInterests) { <span class="profile-interest shared">@interest</span> }</div> }
+								@foreach (var request in state.PhotoAccessRequests.Where(request => request.RequesterId == activeConversationId && !request.IsGranted)) { <div class="chat-access-request"><p><strong>@ActiveProfile.Name</strong> souhaite voir tes photos privées.</p><div><button type="button" disabled="@isRespondingToPhotoRequest" @onclick="() => RespondToChatPhotoRequestAsync(request.Id, true)">Autoriser</button><button type="button" disabled="@isRespondingToPhotoRequest" @onclick="() => RespondToChatPhotoRequestAsync(request.Id, false)">Refuser</button></div></div> }
+								<div class="chat-messages" role="log" aria-live="polite">@if (ActiveConversation.Messages.Count == 0) { <div class="chat-start"><span class="chat-start-heart">♥</span><strong>Le début d'une conversation</strong><p>@(isAuthenticated ? "Écris le premier message pour faire connaissance." : "Les messages de cette démo restent sur cet appareil.")</p></div> }@foreach (var message in ActiveConversation.Messages) { <div class="message-bubble @(message.IsMine ? "mine" : "theirs")"><p>@message.Text</p><time>@message.SentAt.ToString("HH:mm")</time></div> }</div>
+								@if (ActiveConversation.Messages.Count == 0 && string.IsNullOrWhiteSpace(messageText)) { <div class="chat-starters">@foreach (var interest in SharedChatInterests.Take(2)) { <button type="button" @onclick="() => SuggestMessage(interest)">Parler de @interest</button> }</div> }
+								@if (!string.IsNullOrWhiteSpace(chatError)) { <p class="chat-error" role="alert">@chatError</p> }
+								<form class="message-composer" @onsubmit="SendMessageAsync" @onsubmit:preventDefault><label class="sr-only" for="message-text">Ton message</label><input id="message-text" @bind="messageText" @bind:event="oninput" @bind:after="RememberMessageDraft" placeholder="Écris un petit mot..." maxlength="2000" disabled="@isSendingMessage" /><button type="submit" aria-label="Envoyer le message" disabled="@(isSendingMessage || string.IsNullOrWhiteSpace(messageText))"><span aria-hidden="true">↑</span></button></form>
+							}
+							else { <div class="chat-placeholder"><span class="placeholder-mark">&</span><h3>Une belle rencontre commence par un mot.</h3><p>Choisis une conversation, ou découvre les profils près de toi.</p><button class="text-button" @onclick="ShowDiscover">Explorer les profils <span aria-hidden="true">→</span></button></div> }
+						</section>
+					</div><p class="demo-disclaimer">@(isAuthenticated ? "Les conversations sont enregistrées sur ton compte 2gether." : "Démo locale : aucune conversation n'est envoyée à une autre personne.")</p>
+				</section>
+			}
+			else
+			{
+				<section class="my-profile-view"><header class="subpage-heading"><p class="eyebrow">FAIS CONNAISSANCE AVEC TOI</p><h1>Ton profil.</h1><p>Quelques détails pour trouver des gens qui te ressemblent.</p><div class="profile-header-actions"><button class="preview-profile-button" type="button" @onclick="ToggleProfilePreview">@(showProfilePreview ? "Fermer l'aperçu" : "Aperçu visiteur") <span aria-hidden="true">↗</span></button>@if (isAuthenticated) { <button class="signout-button" type="button" @onclick="SignOutAsync">Se déconnecter</button> }</div></header>
+					<form class="profile-form" @onsubmit="SaveProfileAsync" @onsubmit:preventDefault>
+						<div class="form-section-title"><span class="form-step">01</span><div><h2>Les présentations</h2><p>Tu peux modifier ces infos à tout moment.</p></div></div>
+						<div class="form-grid">
+							<label class="form-field"><span>Ton prénom</span><input @bind="state.Name" maxlength="32" /></label><label class="form-field"><span>Ton âge</span><input type="number" @bind="state.Age" min="18" max="99" /></label>
+							<label class="form-field"><span>Ta ville ou ton quartier</span><input @bind="state.City" maxlength="60" /></label><label class="form-field"><span>Ton métier</span><input @bind="state.Occupation" maxlength="60" placeholder="Ex. architecte, infirmière..." /></label>
+							<label class="form-field"><span>Études ou formation</span><input @bind="state.Education" maxlength="80" /></label><label class="form-field"><span>Ton intention</span><select @bind="state.Intent"><option>Une relation sincère</option><option>Faire de belles rencontres</option><option>Voir où la vie mène</option></select></label>
+							<label class="form-field form-field-wide"><span>Quelques mots sur toi</span><textarea @bind="state.About" maxlength="600" rows="4" placeholder="Tes envies, ton quotidien, ce qui te fait rire..."></textarea></label>
+							<label class="form-field"><span>Langues parlées</span><input @bind="state.Languages" maxlength="100" placeholder="Français, anglais..." /></label><label class="form-field"><span>Ton style de vie</span><input @bind="state.Lifestyle" maxlength="100" placeholder="Sport, sorties, calme..." /></label>
+							<label class="form-field form-field-wide"><span>Ce que tu recherches</span><input @bind="state.LookingFor" maxlength="140" /></label>
+						</div>
+						<section class="avatar-editor"><div class="form-section-title"><span class="form-step">02</span><div><h2>Photo de profil</h2><p>Choisis la photo principale de ton profil.</p></div></div><div class="avatar-editor-row">@if (!string.IsNullOrWhiteSpace(state.AvatarDataUrl)) { <img class="avatar-preview" src="@state.AvatarDataUrl" alt="Ta photo de profil" /> } else { <span class="avatar-placeholder">@(string.IsNullOrWhiteSpace(state.Name) ? "?" : state.Name[..1].ToUpperInvariant())</span> }<label class="photo-upload-button">@(state.AvatarDataUrl is null ? "Ajouter une photo" : "Changer la photo")<InputFile accept="image/jpeg,image/png,image/webp" OnChange="UploadAvatarAsync" /></label>@if (state.AvatarDataUrl is not null) { <button class="photo-remove-button" type="button" @onclick="RemoveAvatarAsync">Retirer</button> }</div></section>
+
+						<section class="photo-library-section"><div class="form-section-title"><span class="form-step">03</span><div><h2>Mes bibliothèques de photos</h2><p>Tu choisis quelles photos montrer et à qui.</p></div></div>
+							<div class="photo-library-tabs" role="tablist" aria-label="Bibliothèques de photos"><button type="button" role="tab" aria-selected="@(activePhotoLibrary == "public")" class="@(activePhotoLibrary == "public" ? "active" : "")" @onclick="SelectPublicPhotoLibrary">Publique <span>@state.PublicPhotos.Count</span></button><button type="button" role="tab" aria-selected="@(activePhotoLibrary == "private")" class="@(activePhotoLibrary == "private" ? "active" : "")" @onclick="SelectPrivatePhotoLibrary">Privée <span>@state.PrivatePhotos.Count</span></button></div>
+							<div class="photo-library-toolbar"><p>@(activePhotoLibrary == "public" ? "Visible dans l'aperçu public du profil." : "Visible uniquement après avoir accordé une demande.")</p><label class="photo-upload-button">Ajouter des photos<InputFile accept="image/jpeg,image/png,image/webp" multiple OnChange="AddLibraryPhotosAsync" /></label></div>
+							@if (ActivePhotoLibrary.Any())
+							{
+								<div class="owner-photo-grid">@foreach (var photo in ActivePhotoLibrary) { <figure class="owner-photo" @key="photo.Id"><img src="@photo.DataUrl" alt="Photo de la bibliothèque @(activePhotoLibrary == "public" ? "publique" : "privée")" /><button type="button" aria-label="Supprimer cette photo" @onclick="() => RemoveLibraryPhotoAsync(photo.Id)">×</button></figure> }</div>
+							}
+							else { <div class="photo-library-empty">Aucune photo dans cette bibliothèque.</div> }
+							<p class="photo-library-limit">@(isAuthenticated ? "Jusqu'à 4 photos par bibliothèque. Les images sont redimensionnées et leurs métadonnées sont supprimées sur le serveur." : "Jusqu'à 4 photos par bibliothèque. Les images sont redimensionnées et enregistrées sur cet appareil.")</p>
+						</section>
+						<section class="gps-section"><div class="gps-heading"><span class="gps-icon"><span class="location-pin"></span></span><div><h2>Ma position GPS</h2><p>@(state.Latitude is null ? "Pas encore définie" : $"Enregistrée · précision ±{state.LocationAccuracyMeters:0} m")</p></div></div>
+							<p class="gps-explanation">@(isAuthenticated ? "Avec ton autorisation, les coordonnées exactes sont enregistrées sur ton compte. Les autres membres voient uniquement une zone approximative." : "Ton navigateur demandera l'autorisation. Les coordonnées exactes restent uniquement sur cet appareil dans cette démo.")</p>
+							@if (state.Latitude is not null && state.Longitude is not null) { <code class="gps-coordinates">@state.Latitude.Value.ToString("F5"), @state.Longitude.Value.ToString("F5")</code> }
+							<div class="gps-actions"><button class="gps-button" type="button" @onclick="RequestLocationAsync" disabled="@isLocating">@(isLocating ? "Recherche en cours..." : state.Latitude is null ? "Autoriser l'accès à ma position" : "Actualiser ma position")</button>@if (state.Latitude is not null) { <button class="gps-clear-button" type="button" @onclick="ClearLocationAsync">Supprimer</button> }</div>
+							@if (!string.IsNullOrWhiteSpace(locationFeedback)) { <p class="gps-feedback" role="status">@locationFeedback</p> }
+						</section>
+						<div class="form-section-title interests-title"><span class="form-step">04</span><div><h2>Ce qui te ressemble</h2><p>Les intérêts que tu aimerais partager.</p></div></div>
+						<div class="profile-interest-list">@foreach (var interest in AllInterests) { <button type="button" class="interest-chip @(state.Interests.Contains(interest) ? "active" : "")" @onclick="() => ToggleInterestAsync(interest)">@interest</button> }</div>
+						<div class="privacy-callout"><span class="privacy-mark">i</span><div><strong>Ta vie privée d'abord</strong><p>@(isAuthenticated ? "Ta position exacte n'est pas partagée avec les autres membres. Les zones et les distances affichées sont approximatives." : "Ta position exacte reste sur cet appareil. Les kilomètres affichés sont arrondis et les profils sont des exemples.")</p></div></div>
+						<button class="save-profile-button" type="submit">Enregistrer mon profil <span aria-hidden="true">→</span></button>
+					</form>
+					@if (showProfilePreview)
+					{
+						<section class="profile-gallery-preview"><div class="preview-heading"><div><p class="eyebrow">APERÇU CÔTÉ VISITEUR</p><h2>@state.Name, @state.Age</h2></div><span class="preview-local-badge">Simulation sur cet appareil</span></div>
+							<h3>Photos publiques <span>@state.PublicPhotos.Count</span></h3>
+							@if (state.AvatarDataUrl is not null || state.PublicPhotos.Count > 0) { <div class="visitor-photo-grid">@if (state.AvatarDataUrl is not null) { <img src="@state.AvatarDataUrl" alt="Photo de profil publique" /> }@foreach (var photo in state.PublicPhotos) { <img src="@photo.DataUrl" alt="Photo publique" /> }</div> } else { <p class="photo-library-empty">Ajoute une photo publique pour la voir dans cet aperçu.</p> }
+							@if (state.PrivatePhotos.Count > 0)
+							{
+								<h3 class="private-preview-title">Photos privées <span>@(HasDemoPrivateAccess ? state.PrivatePhotos.Count : "Verrouillées")</span></h3>
+								@if (HasDemoPrivateAccess) { <div class="visitor-photo-grid">@foreach (var photo in state.PrivatePhotos) { <img src="@photo.DataUrl" alt="Photo privée autorisée" /> }</div> }
+								else { <div class="private-lock-panel"><span aria-hidden="true">▣</span><p>Ces photos ne sont pas publiques. Le propriétaire doit accepter une demande.</p><button type="button" class="photo-request-button" @onclick="RequestDemoPhotoAccessAsync" disabled="@HasPendingDemoRequest">@(HasPendingDemoRequest ? "Demande envoyée" : "Demander l'accès")</button></div> }
+							}
+							@if (state.PhotoAccessRequests.Any(request => !request.IsGranted))
+							{
+								<div class="photo-request-inbox"><h3>Demandes d'accès</h3>@foreach (var request in state.PhotoAccessRequests.Where(request => !request.IsGranted)) { <div class="photo-request-row"><span><strong>@request.RequesterName</strong><small>Demande l'accès aux photos privées</small></span><button type="button" @onclick="() => GrantDemoPhotoAccessAsync(request.Id)">Autoriser</button></div> }</div>
+							}
+							<p class="demo-disclaimer">Aperçu et demandes simulés localement. Ils ne sont pas visibles par d'autres appareils.</p>
+						</section>
+					}
+					<p class="demo-disclaimer">Profil conservé uniquement sur cet appareil pour cette démonstration.</p>
+				</section>
+			}
+		</div>
+	</main>
+
+	<nav class="mobile-nav" aria-label="Navigation principale"><button class="mobile-nav-item @(activePage is "discover" or "profile-detail" ? "selected" : "")" @onclick="ShowDiscover"><span class="mobile-icon discover-symbol"></span><span>Découvrir</span></button><button class="mobile-nav-item @(activePage == "map" ? "selected" : "")" @onclick="ShowMap"><span class="mobile-icon map-symbol"></span><span>Carte</span></button><button class="mobile-nav-item @(activePage == "messages" ? "selected" : "")" @onclick="ShowMessages"><span class="mobile-icon messages-symbol"></span><span>Messages</span>@if (state.Conversations.Count > 0) { <span class="mobile-badge">@state.Conversations.Count</span> }</button><button class="mobile-nav-item @(activePage == "profile" ? "selected" : "")" @onclick="ShowProfile"><span class="mobile-icon profile-symbol"></span><span>Profil</span></button></nav>
+	@if (!string.IsNullOrWhiteSpace(toastMessage)) { <div class="toast-message" role="status"><span aria-hidden="true">♥</span>@toastMessage<button @onclick="DismissToast" aria-label="Fermer">×</button></div> }
+	}
+</div>
+
+@code {
+	private const string StorageKey = "adeux.demo.v1";
+	private static readonly string[] AllInterests = ["Randonnée", "Cinéma", "Musique", "Voyages", "Cuisine", "Lecture", "Escalade", "Photographie"];
+	private static readonly List<Profile> SampleProfiles =
+	[
+		new() { Id = "lea", Name = "Léa", Age = 28, Occupation = "Illustratrice", Education = "École des Beaux-Arts", Area = "Croix-Rousse", DemoDistanceKm = 2.4, Latitude = 45.7798, Longitude = 4.8273, PhotoUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=900&q=85", Bio = "Je connais les petites rues et les bonnes boulangeries par cœur. Toujours partante pour une balade.", About = "J'aime les matins au marché, les carnets remplis de dessins et les randonnées qui finissent autour d'une grande table. Je cherche quelqu'un avec qui partager les choses simples et les découvertes improvisées.", Languages = "Français, anglais", Lifestyle = "Créative, marcheuse, épicurienne", Intent = "Une relation sincère", LookingFor = "De la curiosité, de l'humour et de la douceur", Interests = ["Randonnée", "Cinéma", "Cuisine", "Photographie"] },
+		new() { Id = "hugo", Name = "Hugo", Age = 31, Occupation = "Architecte", Education = "Architecture, Lyon 2", Area = "Part-Dieu", DemoDistanceKm = 5.1, Latitude = 45.7602, Longitude = 4.8595, PhotoUrl = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=900&q=85", Bio = "Je dessine des lieux le jour, je cherche les meilleurs concerts le soir.", About = "Je m'intéresse aux quartiers qui changent et aux endroits qui racontent une histoire. Je pars en montagne dès que possible, mais j'adore aussi ne rien prévoir un dimanche.", Languages = "Français, espagnol", Lifestyle = "Concerts, escalade, vélo", Intent = "Faire de belles rencontres", LookingFor = "Une personne spontanée qui aime refaire le monde", Interests = ["Musique", "Voyages", "Cuisine", "Escalade"] },
+		new() { Id = "ines", Name = "Inès", Age = 27, Occupation = "Libraire", Education = "Lettres modernes", Area = "Presqu'île", DemoDistanceKm = 3.8, Latitude = 45.7579, Longitude = 4.8320, PhotoUrl = "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=900&q=85", Bio = "Un roman dans le sac, des billets de train dans la poche. Et toi ?", About = "Je travaille entourée d'histoires et je collectionne les escapades en train. J'aime les discussions qui durent, les salles de cinéma indépendantes et les gens qui savent s'émerveiller.", Languages = "Français, italien", Lifestyle = "Lecture, train, cinéma", Intent = "Voir où la vie mène", LookingFor = "Une belle complicité, sans scénario pré-écrit", Interests = ["Lecture", "Voyages", "Cinéma", "Randonnée"] },
+		new() { Id = "yanis", Name = "Yanis", Age = 30, Occupation = "Chef cuisinier", Education = "École hôtelière", Area = "Confluence", DemoDistanceKm = 8.2, Latitude = 45.7390, Longitude = 4.8186, PhotoUrl = "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=85", Bio = "Je cuisine pour mes amis et je pars dès que possible voir la mer.", About = "La cuisine est mon métier et mon langage préféré. Hors service, je cherche les concerts intimistes, les bons produits et les occasions de prendre le large.", Languages = "Français, arabe", Lifestyle = "Cuisine, musique live, voyages", Intent = "Une relation sincère", LookingFor = "Quelqu'un de chaleureux, qui aime partager", Interests = ["Cuisine", "Voyages", "Musique", "Photographie"] },
+		new() { Id = "manon", Name = "Manon", Age = 26, Occupation = "Urbaniste", Education = "Aménagement du territoire", Area = "Guillotière", DemoDistanceKm = 1.8, Latitude = 45.7522, Longitude = 4.8451, PhotoUrl = "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=900&q=85", Bio = "Je repère les cours cachées et les terrasses tranquilles.", About = "Les villes sont plus belles quand on les parcourt à pied. J'aime les marchés, les expos photo et les escapades sans programme trop serré.", Languages = "Français, anglais", Lifestyle = "Vélo, balades, expos", Intent = "Faire de belles rencontres", LookingFor = "Quelqu'un qui aime découvrir sa propre ville", Interests = ["Balades urbaines", "Photographie", "Architecture", "Marchés"] },
+		new() { Id = "adam", Name = "Adam", Age = 32, Occupation = "Paysagiste", Education = "École du paysage", Area = "Jean Macé", DemoDistanceKm = 2.7, Latitude = 45.7468, Longitude = 4.8421, PhotoUrl = "https://images.unsplash.com/photo-1504593811423-6dd665756598?auto=format&fit=crop&w=900&q=85", Bio = "Jardinier de jour, explorateur de sentiers le week-end.", About = "Je m'intéresse aux jardins partagés, aux plantes qui poussent entre les pavés et aux longues marches où l'on oublie l'heure.", Languages = "Français, espagnol", Lifestyle = "Nature, marche, cuisine", Intent = "Une relation sincère", LookingFor = "Une personne curieuse et attentionnée", Interests = ["Jardinage urbain", "Randonnée", "Cuisine du monde", "Animaux"] },
+		new() { Id = "zoe", Name = "Zoé", Age = 29, Occupation = "Graphiste", Education = "Design graphique", Area = "Brotteaux", DemoDistanceKm = 4.4, Latitude = 45.7705, Longitude = 4.8564, PhotoUrl = "https://images.unsplash.com/photo-1524250502761-1ac6f2e30d43?auto=format&fit=crop&w=900&q=85", Bio = "Je collectionne les vinyles et les affiches de cinéma.", About = "J'aime fabriquer des choses, écouter un album du début à la fin et tomber sur un film dont je ne savais rien.", Languages = "Français, italien", Lifestyle = "Création, musique, cinéma", Intent = "Voir où la vie mène", LookingFor = "Des conversations sincères et des idées à partager", Interests = ["Musique", "Cinéma", "Arts graphiques", "Vinyles"] },
+		new() { Id = "sami", Name = "Sami", Age = 27, Occupation = "Développeur", Education = "Informatique", Area = "Villeurbanne", DemoDistanceKm = 6.2, Latitude = 45.7667, Longitude = 4.8797, PhotoUrl = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=900&q=85", Bio = "Je joue aux échecs, je cours et je teste des recettes.", About = "J'aime apprendre comment les choses fonctionnent, les soirées jeux pas trop sérieuses et les sorties en vélo pour rejoindre des amis.", Languages = "Français, anglais, arabe", Lifestyle = "Jeux, course à pied, cuisine", Intent = "Faire de belles rencontres", LookingFor = "Quelqu'un avec qui rire et apprendre", Interests = ["Jeux de société", "Course à pied", "Technologie", "Pâtisserie"] },
+		new() { Id = "clara", Name = "Clara", Age = 30, Occupation = "Sage-femme", Education = "Santé", Area = "Monplaisir", DemoDistanceKm = 5.8, Latitude = 45.7440, Longitude = 4.8720, PhotoUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=900&q=85", Bio = "Amatrice de théâtre, de natation et de brunchs qui s'éternisent.", About = "Je donne beaucoup au travail et j'aime recharger les batteries avec la natation, une bonne pièce ou une journée dans la nature.", Languages = "Français, anglais", Lifestyle = "Théâtre, natation, brunch", Intent = "Une relation sincère", LookingFor = "De la gentillesse, de l'humour et de l'écoute", Interests = ["Théâtre", "Natation", "Cuisine", "Bien-être"] },
+		new() { Id = "nino", Name = "Nino", Age = 28, Occupation = "Musicien", Education = "Conservatoire", Area = "Saint-Jean", DemoDistanceKm = 3.4, Latitude = 45.7608, Longitude = 4.8261, PhotoUrl = "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=900&q=85", Bio = "Je joue dans des petites salles et j'aime les nuits qui finissent en chanson.", About = "J'écris de la musique, mais je suis aussi très heureux devant un bon documentaire ou à cuisiner pour une bande d'amis.", Languages = "Français, portugais", Lifestyle = "Concerts, cuisine, vélo", Intent = "Voir où la vie mène", LookingFor = "Une complice de sorties et de moments calmes", Interests = ["Musique", "Concerts", "Documentaires", "Cuisine du monde"] },
+		new() { Id = "sarah", Name = "Sarah", Age = 33, Occupation = "Vétérinaire", Education = "Sciences vétérinaires", Area = "Vaise", DemoDistanceKm = 7.1, Latitude = 45.7790, Longitude = 4.8054, PhotoUrl = "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=900&q=85", Bio = "Les animaux, les romans policiers et les randonnées du dimanche.", About = "J'aime les animaux, les balades au vert et les discussions qui partent d'un détail pour refaire le monde. Je cherche une relation simple et joyeuse.", Languages = "Français, allemand", Lifestyle = "Animaux, lecture, plein air", Intent = "Une relation sincère", LookingFor = "Quelqu'un de fiable avec un petit grain de folie", Interests = ["Animaux", "Randonnée", "Lecture", "Écologie"] },
+		new() { Id = "eliott", Name = "Eliott", Age = 30, Occupation = "Photographe", Education = "Image et lumière", Area = "Saxe-Gambetta", DemoDistanceKm = 1.5, Latitude = 45.7512, Longitude = 4.8428, PhotoUrl = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=900&q=85", Bio = "Je photographie la ville à l'aube et les amis à table.", About = "Je préfère les images prises sur le vif aux poses parfaites. Je suis toujours partant pour un marché, une balade photo ou un concert intimiste.", Languages = "Français, anglais", Lifestyle = "Photo argentique, marche, musique", Intent = "Faire de belles rencontres", LookingFor = "Une personne qui aime les petits détails", Interests = ["Photographie", "Balades urbaines", "Marchés", "Musique live"] },
+		new() { Id = "nora", Name = "Nora", Age = 25, Occupation = "Étudiante en droit", Education = "Université Lyon 3", Area = "Vieux Lyon", DemoDistanceKm = 2.1, Latitude = 45.7627, Longitude = 4.8276, PhotoUrl = "https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=85", Bio = "Danse, friperies et escapades en train dès que possible.", About = "Je danse pour décompresser, je chine dans les friperies et je lis autant pour mes cours que pour le plaisir.", Languages = "Français, anglais, arabe", Lifestyle = "Danse, train, seconde main", Intent = "Faire de belles rencontres", LookingFor = "Quelqu'un de respectueux et spontané", Interests = ["Danse", "Voyages en train", "Mode durable", "Lecture"] },
+		new() { Id = "julien", Name = "Julien", Age = 34, Occupation = "Boulanger", Education = "Artisanat", Area = "Gerland", DemoDistanceKm = 4.9, Latitude = 45.7276, Longitude = 4.8325, PhotoUrl = "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&w=900&q=85", Bio = "Debout tôt, libre tôt : j'aime les matinées qui commencent ailleurs.", About = "J'aime faire du pain, les balades à vélo et les escapades spontanées. Je rêve de découvrir des villages et leurs spécialités.", Languages = "Français", Lifestyle = "Artisanat, vélo, terroir", Intent = "Une relation sincère", LookingFor = "Une personne chaleureuse qui aime partager", Interests = ["Pâtisserie", "Vélo", "Voyages", "Marchés"] },
+		new() { Id = "maya", Name = "Maya", Age = 29, Occupation = "Chargée de projet associatif", Education = "Sciences politiques", Area = "Les Pentes", DemoDistanceKm = 2.9, Latitude = 45.7702, Longitude = 4.8328, PhotoUrl = "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=900&q=85", Bio = "Je donne du temps aux assos et je garde les soirées pour les amis.", About = "J'aime les projets qui créent du lien, les librairies indépendantes et les débats qui se terminent autour d'un bon plat.", Languages = "Français, anglais", Lifestyle = "Engagement, lecture, cuisine", Intent = "Une relation sincère", LookingFor = "Quelqu'un d'ouvert et impliqué dans la vie locale", Interests = ["Engagement associatif", "Lecture", "Cuisine végétale", "Vie de quartier"] },
+		new() { Id = "lucas", Name = "Lucas", Age = 31, Occupation = "Ingénieur énergie", Education = "Énergies renouvelables", Area = "Sans-Souci", DemoDistanceKm = 6.7, Latitude = 45.7486, Longitude = 4.8843, PhotoUrl = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=900&q=85", Bio = "Curieux de sciences, de montagne et de bons cafés.", About = "Je travaille sur la transition énergétique, je grimpe quand je peux et je lis volontiers de la science-fiction dans le train.", Languages = "Français, anglais", Lifestyle = "Escalade, sciences, train", Intent = "Faire de belles rencontres", LookingFor = "Une personne curieuse qui aime bouger", Interests = ["Escalade", "Sciences", "Voyages en train", "Cafés de quartier"] },
+		new() { Id = "emma", Name = "Emma", Age = 28, Occupation = "Enseignante", Education = "Lettres et histoire", Area = "Berges du Rhône", DemoDistanceKm = 1.1, Latitude = 45.7684, Longitude = 4.8390, PhotoUrl = "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=900&q=85", Bio = "J'aime les musées calmes, les pique-niques et les playlists partagées.", About = "Je prépare mes cours avec passion et je profite de mes week-ends pour découvrir une expo, cuisiner avec des amis ou m'échapper au bord de l'eau.", Languages = "Français, italien", Lifestyle = "Musées, cuisine, vélo", Intent = "Une relation sincère", LookingFor = "De la complicité et un intérêt pour le monde", Interests = ["Musées", "Pique-niques", "Musique", "Cuisine"] },
+		new() { Id = "mathis", Name = "Mathis", Age = 27, Occupation = "Chef de projet culturel", Education = "Médiation culturelle", Area = "Part-Dieu", DemoDistanceKm = 4.7, Latitude = 45.7633, Longitude = 4.8520, PhotoUrl = "https://images.unsplash.com/photo-1504593811423-6dd665756598?auto=format&fit=crop&w=900&q=85", Bio = "Je déniche des concerts et j'organise des soirées jeux.", About = "J'aime les lieux culturels indépendants, les jeux de société et les escapades en train. Je suis toujours partant pour faire découvrir une nouvelle adresse.", Languages = "Français, anglais", Lifestyle = "Concerts, jeux, sorties", Intent = "Voir où la vie mène", LookingFor = "Quelqu'un qui aime rire et découvrir des lieux", Interests = ["Concerts", "Jeux de société", "Vie de quartier", "Voyages en train"] }
+	];
+
+	private DemoState state = new();
+	private List<Profile> profiles = SampleProfiles.ToList();
+	private string activePage = "discover";
+	private string selectedProfileId = "";
+	private List<ProfilePhoto> selectedProfilePhotos = [];
+	private string activeConversationId = "";
+	private string currentUserId = "";
+	private string messageText = "";
+	private readonly Dictionary<string, string> messageDrafts = [];
+	private List<ProfilePhoto> chatProfilePhotos = [];
+	private string chatError = "";
+	private bool isSendingMessage;
+	private bool isRespondingToPhotoRequest;
+	private bool scrollChatToBottom;
+	private readonly CancellationTokenSource messagePollingCancellation = new();
+	private Task? messagePollingTask;
+	private IEnumerable<string> SharedChatInterests => ActiveProfile?.Interests.Where(SelectedAffinityTopicIds.Contains).Take(4) ?? [];
+	private void SuggestMessage(string interest) => messageText = $"Salut {ActiveProfile?.Name} ! On partage une passion pour {interest}. Qu'est-ce que tu aimes le plus dans cette activité ?";
+	private void RememberMessageDraft() { if (!string.IsNullOrEmpty(activeConversationId)) messageDrafts[activeConversationId] = messageText; }
+	private string toastMessage = "";
+	private string locationFeedback = "";
+	private string affinitySearch = "";
+	private string selectedAffinityCategory = "Toutes les catégories";
+	private int affinityDisplayLimit = 18;
+	private int onboardingStep;
+	private string accountMode = "create";
+	private string onboardingFeedback = "";
+	private string onboardingPassword = "";
+	private string activeRegistrationField = "";
+	private readonly HashSet<string> visitedRegistrationFields = [];
+	private bool accountValidationAttempted;
+	private bool profileValidationAttempted;
+	private bool showRegistrationPassword;
+	private bool isSubmittingRegistration;
+	private bool awaitingEmailConfirmation;
+	private bool localEmailDelivery;
+	private DateTimeOffset verificationResendAt;
+	[SupplyParameterFromQuery(Name = "login")] public bool LoginAfterConfirmation { get; set; }
+	private string registrationAge = "";
+	private IEnumerable<(string Text, bool Complete)> RegistrationChecks(string field) => field switch
+	{
+		"email" => [("Écris une adresse e-mail complète, comme lea@exemple.fr.", System.Net.Mail.MailAddress.TryCreate(state.AccountEmail.Trim(), out var address) && address.Address == state.AccountEmail.Trim())],
+		"password" when accountMode == "existing" => [("Entre le mot de passe que tu as choisi à l'inscription.", onboardingPassword.Length > 0)],
+		"password" => [("Au moins 10 caractères.", onboardingPassword.Length >= 10), ("Au moins un chiffre (0 à 9).", onboardingPassword.Any(character => character is >= '0' and <= '9')), ("Au moins une lettre minuscule (a à z).", onboardingPassword.Any(character => character is >= 'a' and <= 'z'))],
+		"name" => [("Écris le prénom ou le surnom que les autres verront (32 caractères maximum).", state.Name.Trim().Length is > 0 and <= 32)],
+		"age" => [("Indique ton âge en années, par exemple 28. Il faut avoir au moins 18 ans (120 maximum).", int.TryParse(registrationAge, out var age) && age is >= 18 and <= 120)],
+		"gender" => [("Choisis une réponse, ou « Je préfère ne pas préciser ».", !string.IsNullOrWhiteSpace(state.Gender))],
+		"orientation" => [("Choisis une réponse, ou « Je préfère ne pas préciser ».", !string.IsNullOrWhiteSpace(state.SexualOrientation))],
+		"biography" => [("Écris une phrase sur toi. Exemple : « J'aime les balades et discuter autour d'un café. »", !string.IsNullOrWhiteSpace(state.About))],
+		_ => []
+	};
+	private string RegistrationTitle(string field) => field switch { "email" => "Pour retrouver ton compte", "password" => "Ton mot de passe", "name" => "Le nom visible sur ton profil", "age" => "Ton âge, pas ton année de naissance", "gender" => "Comment tu te définis", "orientation" => "Les personnes qui peuvent t'attirer", _ => "Quelques mots pour faire connaissance" };
+	private bool RegistrationHasError(string field) => (visitedRegistrationFields.Contains(field) || (field is "email" or "password" or "name" ? accountValidationAttempted : profileValidationAttempted)) && RegistrationChecks(field).Any(check => !check.Complete);
+	private string RegistrationInvalid(string field) => RegistrationHasError(field) ? "true" : "false";
+	private string? RegistrationDescription(string field) => activeRegistrationField == field || RegistrationHasError(field) ? $"registration-help-{field}" : null;
+	private void ShowRegistrationHelp(string field) => activeRegistrationField = field;
+	private void LeaveRegistrationField(string field) => visitedRegistrationFields.Add(field);
+	private void ToggleRegistrationPassword() { showRegistrationPassword = !showRegistrationPassword; activeRegistrationField = "password"; }
+	private void HandleRegistrationKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") activeRegistrationField = ""; }
+	private RenderFragment RegistrationHelp(string field) => @<div id="@($"registration-help-{field}")" class="registration-help @(activeRegistrationField == field ? "is-open" : "") @(RegistrationHasError(field) ? "has-error" : "")" hidden="@(activeRegistrationField != field && !RegistrationHasError(field))" role="status" aria-live="polite"><strong>@RegistrationTitle(field)</strong><ul>@foreach (var check in RegistrationChecks(field)) { <li class="@(check.Complete ? "complete" : "missing")"><span aria-hidden="true">@(check.Complete ? "✓" : "○")</span><span>@check.Text @(check.Complete ? "C'est bon." : "")</span></li> }</ul></div>;
+	private async Task<bool> FocusFirstRegistrationIssueAsync(params string[] fields)
+	{
+		var first = fields.FirstOrDefault(field => RegistrationChecks(field).Any(check => !check.Complete));
+		if (first is null) return false;
+		activeRegistrationField = first;
+		StateHasChanged();
+		await JS.InvokeVoidAsync("registrationGuidance.focusField", $"registration-{first}");
+		return true;
+	}
+	private bool isAuthenticated;
+	private string onboardingTopicSearch = "";
+	private string onboardingTopicCategory = "Toutes les catégories";
+	private int onboardingTopicLimit = 20;
+	private bool isLocating;
+	private const int MaxPhotosPerLibrary = 4;
+	private string activePhotoLibrary = "public";
+	private bool showProfilePreview;
+	private DotNetObjectReference<Home>? mapReference;
+	private static readonly string[] ProfileDisplayModes = ["small", "medium", "large", "list"];
+	private List<ProfilePhoto> ActivePhotoLibrary => activePhotoLibrary == "public" ? state.PublicPhotos : state.PrivatePhotos;
+	private int SelectedAffinityCount => state.Interests.Count + state.AffinityReasonIds.Count;
+	private HashSet<string> SelectedAffinityTopicIds => state.Interests.Concat(state.AffinityReasonIds.Select(id => AffinityReasonCatalog.Reasons.FirstOrDefault(reason => reason.Id == id)?.TopicId).OfType<string>()).ToHashSet();
+	private IEnumerable<AffinityReason> FilteredAffinityReasons => AffinityReasonCatalog.Reasons.Where(reason => (selectedAffinityCategory == "Toutes les catégories" || reason.Category == selectedAffinityCategory) && (string.IsNullOrWhiteSpace(affinitySearch) || reason.Text.Contains(affinitySearch.Trim(), StringComparison.OrdinalIgnoreCase) || reason.Category.Contains(affinitySearch.Trim(), StringComparison.OrdinalIgnoreCase))).OrderByDescending(reason => state.AffinityReasonIds.Contains(reason.Id));
+	private int FilteredAffinityReasonCount => FilteredAffinityReasons.Count();
+	private int VisibleAffinityReasonCount => Math.Min(affinityDisplayLimit, FilteredAffinityReasonCount);
+	private IEnumerable<AffinityReason> VisibleAffinityReasons => FilteredAffinityReasons.Take(affinityDisplayLimit);
+	private IEnumerable<AffinityTopic> FilteredOnboardingTopics => AffinityReasonCatalog.Topics.Where(topic => (onboardingTopicCategory == "Toutes les catégories" || topic.Category == onboardingTopicCategory) && (string.IsNullOrWhiteSpace(onboardingTopicSearch) || topic.Id.Contains(onboardingTopicSearch.Trim(), StringComparison.OrdinalIgnoreCase) || topic.Activity.Contains(onboardingTopicSearch.Trim(), StringComparison.OrdinalIgnoreCase) || topic.Category.Contains(onboardingTopicSearch.Trim(), StringComparison.OrdinalIgnoreCase)));
+	private IEnumerable<AffinityTopic> VisibleOnboardingTopics => FilteredOnboardingTopics.Take(onboardingTopicLimit);
+	private bool HasDemoPrivateAccess => state.PhotoAccessRequests.Any(request => request.IsGranted);
+	private bool HasPendingDemoRequest => state.PhotoAccessRequests.Any(request => !request.IsGranted);
+	private string DistanceOriginLabel => isAuthenticated ? "Distance approximative" : state.Latitude is null ? "Distance de démonstration" : "Depuis ta position GPS · profil exemple";
+	private IEnumerable<Profile> VisibleProfiles => profiles.Where(profile => !state.HiddenProfileIds.Contains(profile.Id) && DistanceFromUser(profile) <= state.RadiusKm).OrderByDescending(AffinityPercent).ThenBy(DistanceFromUser);
+	private Conversation? ActiveConversation => state.Conversations.FirstOrDefault(item => item.ProfileId == activeConversationId);
+	private Profile? ActiveProfile
+	{
+		get
+		{
+			var profile = FindProfile(activeConversationId);
+			if (profile is not null) return profile;
+			var conversation = ActiveConversation;
+			return conversation is null ? null : new Profile { Id = conversation.ProfileId, Name = conversation.ProfileName, Area = conversation.Area, DemoDistanceKm = conversation.DistanceKm, PhotoUrl = conversation.PhotoUrl, IsDemo = !isAuthenticated };
+		}
+	}
+
+	protected override async Task OnAfterRenderAsync(bool firstRender)
+	{
+		if (firstRender)
+		{
+			if (LoginAfterConfirmation) accountMode = "existing";
+			try
+			{
+				var options = await Http.GetFromJsonAsync<RegistrationEmailOptions>("/api/registration-options");
+				localEmailDelivery = options?.LocalEmailDelivery == true;
+			}
+			catch (HttpRequestException) { }
+			try
+			{
+				var savedState = await JS.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+				if (!string.IsNullOrWhiteSpace(savedState)) state = JsonSerializer.Deserialize<DemoState>(savedState) ?? new DemoState();
+			}
+			catch (JsonException) { state = new DemoState(); }
+			state.OnboardingComplete = false;
+			state.Interests ??= [];
+			state.LikedProfileIds ??= [];
+			state.HiddenProfileIds ??= [];
+			state.Conversations ??= [];
+			state.PublicPhotos ??= [];
+			state.PrivatePhotos ??= [];
+			state.PhotoAccessRequests ??= [];
+			state.AffinityReasonIds ??= [];
+			if (!ProfileDisplayModes.Contains(state.ProfileDisplayMode)) state.ProfileDisplayMode = "medium";
+			await RestoreAuthenticatedSessionAsync();
+			if (!isAuthenticated)
+			{
+				var displayMode = state.ProfileDisplayMode;
+				state = new DemoState { Name = "", Age = 18, Interests = [], ProfileDisplayMode = displayMode };
+				onboardingStep = 0;
+			}
+			StateHasChanged();
+			messagePollingTask = PollMessagesAsync(messagePollingCancellation.Token);
+		}
+
+		if (scrollChatToBottom && activePage == "messages")
+		{
+			scrollChatToBottom = false;
+			await JS.InvokeVoidAsync("chatViewport.scrollToLatest");
+		}
+		if (activePage == "map")
+		{
+			mapReference ??= DotNetObjectReference.Create(this);
+			var profiles = VisibleProfiles.Select(profile => new { id = profile.Id, name = profile.Name, area = profile.Area, latitude = profile.Latitude, longitude = profile.Longitude, distanceKm = DistanceFromUser(profile) }).ToArray();
+			var currentLocation = state.Latitude is double latitude && state.Longitude is double longitude ? new { latitude, longitude } : null;
+			await JS.InvokeVoidAsync("profileMap.render", "profile-map", profiles, currentLocation, mapReference);
+		}
+		else if (mapReference is not null)
+		{
+			await JS.InvokeVoidAsync("profileMap.dispose", "profile-map");
+			mapReference.Dispose();
+			mapReference = null;
+		}
+	}
+
+	private void ShowDiscover() { RememberMessageDraft(); activePage = "discover"; activeConversationId = ""; selectedProfileId = ""; }
+	private void ShowMap() { RememberMessageDraft(); activePage = "map"; activeConversationId = ""; }
+	private async Task ShowMessages()
+	{
+		RememberMessageDraft();
+		activePage = "messages";
+		activeConversationId = "";
+		if (isAuthenticated) await LoadRemoteConversationsAsync();
+	}
+	private async Task ShowProfile()
+	{
+		RememberMessageDraft();
+		activePage = "profile";
+		activeConversationId = "";
+		if (isAuthenticated) await LoadRemotePhotoRequestsAsync();
+	}
+	private void ToggleProfilePreview() => showProfilePreview = !showProfilePreview;
+	private async Task SetDisplayModeAsync(string mode)
+	{
+		if (!ProfileDisplayModes.Contains(mode)) return;
+		state.ProfileDisplayMode = mode;
+		await SaveStateAsync();
+	}
+	private Task SetSmallDisplayModeAsync() => SetDisplayModeAsync("small");
+	private Task SetMediumDisplayModeAsync() => SetDisplayModeAsync("medium");
+	private Task SetLargeDisplayModeAsync() => SetDisplayModeAsync("large");
+	private Task SetListDisplayModeAsync() => SetDisplayModeAsync("list");
+	private void SelectPublicPhotoLibrary() => activePhotoLibrary = "public";
+	private void SelectPrivatePhotoLibrary() => activePhotoLibrary = "private";
+	private async Task OpenConversationAsync(string profileId)
+	{
+		RememberMessageDraft();
+		activeConversationId = profileId;
+		messageText = messageDrafts.GetValueOrDefault(profileId, "");
+		chatError = "";
+		chatProfilePhotos = [];
+		if (!isAuthenticated || FindProfile(profileId) is { IsDemo: true }) return;
+		try
+		{
+		using var profileResponse = await Http.GetAsync($"/api/profiles/{Uri.EscapeDataString(profileId)}");
+		if (activeConversationId != profileId) return;
+		if (profileResponse.IsSuccessStatusCode)
+		{
+			var remoteProfile = await profileResponse.Content.ReadFromJsonAsync<PublicProfileResponse>();
+			if (remoteProfile is not null) { profiles.RemoveAll(item => item.Id == profileId); profiles.Add(ToProfile(remoteProfile)); }
+		}
+		using var response = await Http.GetAsync($"/api/messages/{Uri.EscapeDataString(profileId)}");
+		if (activeConversationId != profileId) return;
+		if (!response.IsSuccessStatusCode) { chatError = "Impossible de charger cette conversation. Réessaie avec Actualiser."; return; }
+		var messages = await response.Content.ReadFromJsonAsync<List<DirectMessageResponse>>() ?? [];
+		var conversation = state.Conversations.FirstOrDefault(item => item.ProfileId == profileId);
+		if (conversation is null)
+		{
+			var profile = FindProfile(profileId);
+			conversation = new Conversation { ProfileId = profileId, ProfileName = profile?.Name ?? "Membre 2gether", Area = profile?.Area ?? "", DistanceKm = profile is null ? 0 : DistanceFromUser(profile), PhotoUrl = profile?.PhotoUrl ?? CreateProfilePlaceholder("M") };
+			state.Conversations.Add(conversation);
+		}
+		conversation.Messages = messages.Select(message => new ChatMessage { Text = message.Text, SentAt = message.SentAt.LocalDateTime, IsMine = message.SenderId == currentUserId }).ToList();
+		scrollChatToBottom = true;
+		using var photoResponse = await Http.GetAsync($"/api/profiles/{Uri.EscapeDataString(profileId)}/photos");
+		if (activeConversationId != profileId || !photoResponse.IsSuccessStatusCode) return;
+		var photos = await photoResponse.Content.ReadFromJsonAsync<List<ProfilePhotoResponse>>() ?? [];
+		chatProfilePhotos = photos.Select(photo => new ProfilePhoto { Id = photo.Id.ToString(), DataUrl = photo.Url, Visibility = photo.Visibility }).ToList();
+		await LoadRemotePhotoRequestsAsync();
+		}
+		catch (HttpRequestException) { if (activeConversationId == profileId) chatError = "Connexion interrompue. Réessaie avec Actualiser."; }
+	}
+	private async Task PollMessagesAsync(CancellationToken cancellationToken)
+	{
+		using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+		try
+		{
+			while (await timer.WaitForNextTickAsync(cancellationToken))
+			{
+				if (!state.OnboardingComplete && verificationResendAt != default) await InvokeAsync(StateHasChanged);
+				if (!isAuthenticated || activePage != "messages" || isSendingMessage) continue;
+				try
+				{
+					var conversation = ActiveConversation;
+					if (conversation is null) { await LoadRemoteConversationsAsync(); await InvokeAsync(StateHasChanged); continue; }
+					if (ActiveProfile is { IsDemo: true }) continue;
+					var userId = currentUserId;
+					await LoadRemotePhotoRequestsAsync(cancellationToken);
+					if (ActiveConversation != conversation || currentUserId != userId) continue;
+					if (ActiveProfile is { HasPendingPhotoRequest: true })
+					{
+						using var photoResponse = await Http.GetAsync($"/api/profiles/{Uri.EscapeDataString(conversation.ProfileId)}/photos", cancellationToken);
+						if (photoResponse.IsSuccessStatusCode && ActiveConversation == conversation)
+						{
+							var photos = await photoResponse.Content.ReadFromJsonAsync<List<ProfilePhotoResponse>>(cancellationToken) ?? [];
+							chatProfilePhotos = photos.Select(photo => new ProfilePhoto { Id = photo.Id.ToString(), DataUrl = photo.Url, Visibility = photo.Visibility }).ToList();
+							if (photos.Any(photo => photo.Visibility == 1) && ActiveProfile is { } profile) profile.HasPendingPhotoRequest = false;
+						}
+					}
+					await InvokeAsync(StateHasChanged);
+					using var response = await Http.GetAsync($"/api/messages/{Uri.EscapeDataString(conversation.ProfileId)}", cancellationToken);
+					if (!response.IsSuccessStatusCode || isSendingMessage || currentUserId != userId || ActiveConversation != conversation || activePage != "messages") continue;
+					var messages = await response.Content.ReadFromJsonAsync<List<DirectMessageResponse>>(cancellationToken) ?? [];
+					var latest = messages.LastOrDefault();
+					var previous = conversation.Messages.LastOrDefault();
+					if (latest is null || previous is not null && latest.SentAt.LocalDateTime <= previous.SentAt && latest.Text == previous.Text) continue;
+					if (previous is not null && latest.SentAt.LocalDateTime < previous.SentAt) continue;
+					var nearLatest = await JS.InvokeAsync<bool>("chatViewport.isNearLatest");
+					conversation.Messages = messages.Select(message => new ChatMessage { Text = message.Text, SentAt = message.SentAt.LocalDateTime, IsMine = message.SenderId == currentUserId }).ToList();
+					scrollChatToBottom = nearLatest;
+					await InvokeAsync(StateHasChanged);
+				}
+				catch (HttpRequestException) { }
+			}
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+	}
+	public async ValueTask DisposeAsync()
+	{
+		messagePollingCancellation.Cancel();
+		if (messagePollingTask is not null) await messagePollingTask;
+		messagePollingCancellation.Dispose();
+		mapReference?.Dispose();
+	}
+	private async Task LoadRemoteConversationsAsync()
+	{
+		using var response = await Http.GetAsync("/api/conversations");
+		if (!response.IsSuccessStatusCode) { toastMessage = "Impossible de charger les conversations."; return; }
+		var summaries = await response.Content.ReadFromJsonAsync<List<ConversationSummaryResponse>>() ?? [];
+		var unsentConversations = state.Conversations.Where(conversation => messageDrafts.TryGetValue(conversation.ProfileId, out var draft) && !string.IsNullOrWhiteSpace(draft) && summaries.All(summary => summary.OtherUserId != conversation.ProfileId)).ToList();
+		state.Conversations = summaries.Select(summary => new Conversation
+		{
+			ProfileId = summary.OtherUserId,
+			ProfileName = summary.DisplayName,
+			Area = summary.City,
+			DistanceKm = 0,
+			PhotoUrl = FindProfile(summary.OtherUserId)?.PhotoUrl ?? CreateProfilePlaceholder(summary.DisplayName),
+			Messages = [new ChatMessage { Text = summary.LastMessage, SentAt = summary.LastSentAt.LocalDateTime }]
+		}).ToList();
+		state.Conversations.AddRange(unsentConversations);
+	}
+	private async Task OpenProfileAsync(string profileId)
+	{
+		selectedProfileId = profileId;
+		activePage = "profile-detail";
+		selectedProfilePhotos = [];
+		var profile = FindProfile(profileId);
+		if (!isAuthenticated || profile is null || profile.IsDemo) return;
+		using var response = await Http.GetAsync($"/api/profiles/{Uri.EscapeDataString(profileId)}/photos");
+		if (!response.IsSuccessStatusCode) return;
+		var photos = await response.Content.ReadFromJsonAsync<List<ProfilePhotoResponse>>() ?? [];
+		selectedProfilePhotos = photos.Select(photo => new ProfilePhoto { Id = photo.Id.ToString(), DataUrl = photo.Url, Visibility = photo.Visibility }).ToList();
+	}
+	private void CloseConversation() { RememberMessageDraft(); activeConversationId = ""; }
+	[JSInvokable]
+	public async Task OpenProfileFromMap(string profileId)
+	{
+		if (FindProfile(profileId) is null) return;
+		await OpenProfileAsync(profileId);
+		StateHasChanged();
+	}
+	private void DismissToast() => toastMessage = "";
+		private async Task SignOutAsync()
+		{
+			if (isAuthenticated) await Http.PostAsync("/api/auth/logout", null);
+			isAuthenticated = false;
+			messageDrafts.Clear();
+			messageText = "";
+			chatProfilePhotos = [];
+			chatError = "";
+			var displayMode = state.ProfileDisplayMode;
+			state = new DemoState { Name = "", Age = 18, Interests = [], ProfileDisplayMode = displayMode };
+			profiles = SampleProfiles.ToList();
+			activePage = "discover";
+			activeConversationId = "";
+			selectedProfileId = "";
+			onboardingStep = 0;
+			await JS.InvokeVoidAsync("localStorage.removeItem", StorageKey);
+			StateHasChanged();
+		}
+	private void ChooseCreateAccount() { accountMode = "create"; onboardingFeedback = ""; accountValidationAttempted = false; visitedRegistrationFields.Clear(); activeRegistrationField = ""; }
+	private void ChooseExistingAccount() { accountMode = "existing"; onboardingFeedback = ""; accountValidationAttempted = false; visitedRegistrationFields.Clear(); activeRegistrationField = ""; }
+	private void ReturnToVerifiedLogin() { awaitingEmailConfirmation = false; ChooseExistingAccount(); }
+	private void CorrectRegistrationEmail() { awaitingEmailConfirmation = false; ChooseCreateAccount(); }
+	private async Task ResendVerificationAsync()
+	{
+		if (isSubmittingRegistration || DateTimeOffset.UtcNow < verificationResendAt) return;
+		accountValidationAttempted = false;
+		visitedRegistrationFields.Add("email");
+		if (await FocusFirstRegistrationIssueAsync("email")) return;
+		isSubmittingRegistration = true;
+		try
+		{
+			using var response = await Http.PostAsJsonAsync("/api/auth/resendConfirmationEmail", new { Email = state.AccountEmail.Trim() });
+			onboardingFeedback = response.IsSuccessStatusCode ? "Si cette adresse correspond à un compte à vérifier, un nouveau lien a été demandé." : response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? "Trop de demandes. Patiente une minute avant de réessayer." : "Le message n'a pas pu être envoyé. Réessaie dans un instant.";
+			verificationResendAt = DateTimeOffset.UtcNow.AddSeconds(30);
+		}
+		catch (HttpRequestException) { onboardingFeedback = "Le serveur est indisponible. Réessaie dans un instant."; }
+		finally { isSubmittingRegistration = false; }
+	}
+	private sealed class RegistrationEmailOptions { public bool LocalEmailDelivery { get; set; } }
+	private void GoToAccountStep() { onboardingStep = 0; onboardingFeedback = ""; }
+	private void GoToPassionsStep() { onboardingStep = 1; onboardingFeedback = ""; }
+	private void GoToLocationStep() { onboardingStep = 2; onboardingFeedback = ""; }
+	private void ContinueToProfileStep() { onboardingStep = 3; onboardingFeedback = ""; activeRegistrationField = ""; if (registrationAge.Length == 0 && state.Age > 18) registrationAge = state.Age.ToString(); }
+	private void DeferBiography() { state.About = "Je préfère me présenter dans la conversation."; activeRegistrationField = "biography"; }
+	private void ResetOnboardingTopicResults() => onboardingTopicLimit = 20;
+	private void ShowMoreOnboardingTopics() => onboardingTopicLimit = Math.Min(onboardingTopicLimit + 20, FilteredOnboardingTopics.Count());
+	private async Task ContinueFromAccountAsync()
+	{
+		if (isSubmittingRegistration) return;
+		state.AccountEmail = state.AccountEmail.Trim();
+		state.Name = state.Name.Trim();
+		accountValidationAttempted = true;
+		onboardingFeedback = "";
+		if (await FocusFirstRegistrationIssueAsync(accountMode == "create" ? ["email", "password", "name"] : ["email", "password"])) return;
+
+		isSubmittingRegistration = true;
+		try
+		{
+			if (accountMode == "create")
+			{
+				using var registerResponse = await Http.PostAsJsonAsync("/api/auth/register", new { Email = state.AccountEmail, Password = onboardingPassword });
+				if (!registerResponse.IsSuccessStatusCode)
+				{
+					if (registerResponse.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+					{
+						awaitingEmailConfirmation = true;
+						onboardingPassword = "";
+						onboardingFeedback = "L'envoi n'a pas abouti. Ton compte reste inactif ; tu peux réessayer avec « Renvoyer le lien ».";
+						return;
+					}
+					onboardingFeedback = await ReadApiErrorAsync(registerResponse, "Impossible de créer le compte. Vérifie l'adresse et le mot de passe (10 caractères et un chiffre minimum).");
+					return;
+				}
+				awaitingEmailConfirmation = true;
+				verificationResendAt = DateTimeOffset.UtcNow.AddSeconds(30);
+				onboardingPassword = "";
+				onboardingFeedback = "";
+				return;
+			}
+
+			using var loginResponse = await Http.PostAsJsonAsync("/api/auth/login?useCookies=true", new { Email = state.AccountEmail, Password = onboardingPassword });
+			if (!loginResponse.IsSuccessStatusCode)
+			{
+				onboardingFeedback = loginResponse.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? "Trop de tentatives. Patiente une minute avant de réessayer." : "Connexion impossible. Vérifie tes identifiants et confirme d'abord ton adresse e-mail. Tu peux demander un nouveau lien ci-dessus.";
+				return;
+			}
+
+			isAuthenticated = true;
+			state.AccountMode = accountMode;
+			state.OnboardingComplete = false;
+			onboardingPassword = "";
+			await JS.InvokeVoidAsync("localStorage.removeItem", StorageKey);
+			await LoadRemoteProfileAsync();
+			if (state.OnboardingComplete)
+			{
+				activePage = "discover";
+				onboardingFeedback = "";
+				return;
+			}
+			if (accountMode == "existing" && string.IsNullOrWhiteSpace(state.Name)) state.Name = state.AccountEmail.Split('@')[0];
+			if (onboardingStep == 0) onboardingStep = 1;
+			onboardingFeedback = "";
+			await EnsureRemoteProfileAsync(false);
+		}
+		catch (HttpRequestException)
+		{
+			onboardingFeedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally { isSubmittingRegistration = false; }
+	}
+	private async Task ToggleOnboardingTopicAsync(string topicId)
+	{
+		if (!AffinityReasonCatalog.Topics.Any(topic => topic.Id == topicId)) return;
+		if (!state.Interests.Remove(topicId))
+		{
+			if (SelectedAffinityTopicIds.Count >= 10)
+			{
+				onboardingFeedback = "Tu peux choisir au maximum 10 passions.";
+				return;
+			}
+			state.Interests.Add(topicId);
+		}
+		onboardingFeedback = "";
+		await SaveStateAsync();
+	}
+	private async Task ContinueFromPassionsAsync()
+	{
+		if (SelectedAffinityTopicIds.Count == 0)
+		{
+			onboardingFeedback = "Choisis au moins une passion pour continuer.";
+			return;
+		}
+		onboardingStep = 2;
+		onboardingFeedback = "";
+		if (!await EnsureRemoteProfileAsync(false)) return;
+	}
+	private async Task CompleteOnboardingAsync()
+	{
+		if (isSubmittingRegistration) return;
+		profileValidationAttempted = true;
+		onboardingFeedback = "";
+		if (await FocusFirstRegistrationIssueAsync("age", "gender", "orientation", "biography")) return;
+		state.Age = int.Parse(registrationAge);
+		isSubmittingRegistration = true;
+		try
+		{
+		state.OnboardingComplete = true;
+		if (!await EnsureRemoteProfileAsync(true))
+		{
+			state.OnboardingComplete = false;
+			return;
+		}
+		if (state.Latitude is double latitude && state.Longitude is double longitude)
+		{
+			using var locationResponse = await Http.PostAsJsonAsync("/api/me/location", new { Latitude = latitude, Longitude = longitude, AccuracyMeters = state.LocationAccuracyMeters ?? 0 });
+			if (!locationResponse.IsSuccessStatusCode) onboardingFeedback = "Le profil est enregistré, mais la position n'a pas pu être synchronisée.";
+		}
+		activePage = "discover";
+		onboardingFeedback = "";
+		await LoadNearbyProfilesAsync();
+		}
+		catch (HttpRequestException) { state.OnboardingComplete = false; onboardingFeedback = "Connexion interrompue. Tes réponses sont conservées ; réessaie dans un instant."; }
+		finally { isSubmittingRegistration = false; }
+	}
+	private async Task RestoreAuthenticatedSessionAsync()
+	{
+		try
+		{
+			using var accountResponse = await Http.GetAsync("/api/session");
+			if (!accountResponse.IsSuccessStatusCode) return;
+			var account = await accountResponse.Content.ReadFromJsonAsync<SessionResponse>();
+			if (account?.IsAuthenticated != true) return;
+			isAuthenticated = true;
+			currentUserId = account.UserId;
+			state.AccountEmail = account.Email;
+			await LoadRemoteProfileAsync();
+			if (!state.OnboardingComplete && onboardingStep == 0) onboardingStep = 1;
+			await JS.InvokeVoidAsync("localStorage.removeItem", StorageKey);
+		}
+		catch (HttpRequestException)
+		{
+			isAuthenticated = false;
+			state.OnboardingComplete = false;
+		}
+	}
+	private async Task LoadRemoteProfileAsync()
+	{
+		using var response = await Http.GetAsync("/api/me/profile");
+		if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+		{
+			state.OnboardingComplete = false;
+			return;
+		}
+		if (!response.IsSuccessStatusCode) return;
+		var profile = await response.Content.ReadFromJsonAsync<OwnProfileResponse>();
+		if (profile is null) return;
+		currentUserId = profile.UserId;
+		state.AccountEmail = profile.Email;
+		state.Name = profile.DisplayName;
+		state.Age = profile.Age;
+		state.Gender = profile.Gender;
+		state.SexualOrientation = profile.SexualOrientation;
+		state.About = profile.Biography;
+		state.City = profile.City;
+		state.Occupation = profile.Occupation;
+		state.Education = profile.Education;
+		state.Languages = profile.Languages;
+		state.Lifestyle = profile.Lifestyle;
+		state.LookingFor = profile.LookingFor;
+		state.Intent = profile.Intent;
+		state.Interests = profile.Interests.ToList();
+		state.AffinityReasonIds = profile.AffinityReasonIds.ToList();
+		state.Latitude = profile.Latitude;
+		state.Longitude = profile.Longitude;
+		state.LocationAccuracyMeters = profile.LocationAccuracyMeters;
+		state.OnboardingComplete = profile.OnboardingComplete;
+		await LoadRemotePhotosAsync();
+		if (profile.OnboardingComplete) await LoadNearbyProfilesAsync();
+	}
+	private async Task LoadRemotePhotosAsync()
+	{
+		using var response = await Http.GetAsync("/api/me/photos");
+		if (!response.IsSuccessStatusCode) return;
+		var photos = await response.Content.ReadFromJsonAsync<List<ProfilePhotoResponse>>() ?? [];
+		var avatar = photos.FirstOrDefault(photo => photo.IsAvatar);
+		state.AvatarDataUrl = avatar?.Url;
+		state.AvatarPhotoId = avatar?.Id.ToString() ?? "";
+		state.PublicPhotos = photos.Where(photo => !photo.IsAvatar && photo.Visibility == 0).Select(photo => new ProfilePhoto { Id = photo.Id.ToString(), DataUrl = photo.Url, Visibility = photo.Visibility }).ToList();
+		state.PrivatePhotos = photos.Where(photo => photo.Visibility == 1).Select(photo => new ProfilePhoto { Id = photo.Id.ToString(), DataUrl = photo.Url, Visibility = photo.Visibility }).ToList();
+	}
+	private async Task LoadNearbyProfilesAsync()
+	{
+		using var response = await Http.GetAsync("/api/profiles?radiusKm=100");
+		if (!response.IsSuccessStatusCode) return;
+		var remoteProfiles = await response.Content.ReadFromJsonAsync<List<PublicProfileResponse>>() ?? [];
+		profiles = remoteProfiles.Select(ToProfile).ToList();
+	}
+	private static Profile ToProfile(PublicProfileResponse profile) => new()
+		{
+			Id = profile.UserId,
+			Name = profile.DisplayName,
+			Age = profile.Age,
+			Gender = profile.Gender,
+			SexualOrientation = profile.SexualOrientation,
+			Occupation = profile.Occupation,
+			Education = profile.Education,
+			Area = profile.City,
+			DemoDistanceKm = profile.DistanceKm,
+			Latitude = profile.MapLatitude,
+			Longitude = profile.MapLongitude,
+			PhotoUrl = profile.AvatarUrl ?? CreateProfilePlaceholder(profile.DisplayName),
+			PublicPhotoCount = profile.PublicPhotoCount,
+			PrivatePhotoCount = profile.PrivatePhotoCount,
+			HasPendingPhotoRequest = profile.HasPendingPhotoRequest,
+			Bio = profile.Biography,
+			About = profile.Biography,
+			Languages = profile.Languages,
+			Lifestyle = profile.Lifestyle,
+			Intent = profile.Intent,
+			LookingFor = profile.LookingFor,
+			Interests = profile.Interests,
+			IsDemo = false
+		};
+	private static string CreateProfilePlaceholder(string displayName)
+	{
+		var initial = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(displayName) ? "?" : displayName[..1].ToUpperInvariant());
+		var svg = $"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 480'><rect width='400' height='480' fill='#e8eee8'/><circle cx='200' cy='170' r='78' fill='#cad9cb'/><path d='M55 440c7-112 60-165 145-165s138 53 145 165' fill='#cad9cb'/><text x='200' y='195' text-anchor='middle' font-family='Georgia,serif' font-size='68' fill='#355b46'>{initial}</text></svg>";
+		return $"data:image/svg+xml,{Uri.EscapeDataString(svg)}";
+	}
+	private async Task<bool> EnsureRemoteProfileAsync(bool onboardingComplete)
+	{
+		if (!isAuthenticated) return false;
+		var request = new ProfileUpsertRequest(state.Name, state.Age, state.Gender, state.SexualOrientation, state.About, state.City, state.Occupation, state.Education, state.Languages, state.Lifestyle, state.LookingFor, state.Intent, state.Interests, state.AffinityReasonIds, onboardingComplete);
+		using var response = await Http.PutAsJsonAsync("/api/me/profile", request);
+		if (response.IsSuccessStatusCode) return true;
+		onboardingFeedback = await ReadApiErrorAsync(response, "Impossible d'enregistrer le profil sur le serveur.");
+		return false;
+	}
+	private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response, string fallback)
+	{
+		try
+		{
+			using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+			if (document.RootElement.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String) return detail.GetString() ?? fallback;
+			if (document.RootElement.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String) return title.GetString() ?? fallback;
+		}
+		catch (JsonException) { }
+		return fallback;
+	}
+	private Profile? FindProfile(string id) => profiles.FirstOrDefault(profile => profile.Id == id) ?? SampleProfiles.FirstOrDefault(profile => profile.Id == id);
+	private string AffinityLabel(Profile profile) => profile.Interests.Any(SelectedAffinityTopicIds.Contains) ? $"{AffinityPercent(profile)}% en commun" : "À découvrir";
+	private int AffinityPercent(Profile profile)
+	{
+		var selectedTopics = SelectedAffinityTopicIds;
+		return selectedTopics.Count == 0 ? 0 : (int)Math.Round((double)profile.Interests.Count(selectedTopics.Contains) / selectedTopics.Count * 100);
+	}
+
+	private async Task ToggleInterestAsync(string interest)
+	{
+		if (!state.Interests.Remove(interest))
+		{
+			if (SelectedAffinityTopicIds.Count >= 10) { toastMessage = "Tu peux choisir au maximum 10 passions."; return; }
+			state.Interests.Add(interest);
+		}
+		await SaveStateAsync();
+	}
+	private async Task ToggleAffinityReasonAsync(string reasonId)
+	{
+		if (!AffinityReasonCatalog.Reasons.Any(reason => reason.Id == reasonId)) return;
+		if (!state.AffinityReasonIds.Remove(reasonId))
+		{
+			var topicId = AffinityReasonCatalog.Reasons.First(reason => reason.Id == reasonId).TopicId;
+			if (!SelectedAffinityTopicIds.Contains(topicId) && SelectedAffinityTopicIds.Count >= 10) { toastMessage = "Tu peux choisir au maximum 10 passions."; return; }
+			state.AffinityReasonIds.Add(reasonId);
+		}
+		await SaveStateAsync();
+	}
+	private void ResetAffinityResults() => affinityDisplayLimit = 18;
+	private void ShowMoreAffinityReasons() => affinityDisplayLimit = Math.Min(affinityDisplayLimit + 18, FilteredAffinityReasonCount);
+	private async Task ToggleLikeAsync(string profileId)
+	{
+		if (!state.LikedProfileIds.Remove(profileId)) state.LikedProfileIds.Add(profileId);
+		await SaveStateAsync();
+	}
+	private async Task HideProfileAsync(string profileId)
+	{
+		if (!state.HiddenProfileIds.Contains(profileId)) state.HiddenProfileIds.Add(profileId);
+		await SaveStateAsync();
+	}
+	private async Task StartConversationAsync(string profileId)
+	{
+		var profile = FindProfile(profileId);
+		activePage = "messages";
+		if (isAuthenticated && profile is { IsDemo: false })
+		{
+			await OpenConversationAsync(profileId);
+			return;
+		}
+		if (state.Conversations.All(item => item.ProfileId != profileId))
+			state.Conversations.Add(new Conversation { ProfileId = profileId, ProfileName = profile?.Name ?? "Profil démo", Area = profile?.Area ?? "", PhotoUrl = profile?.PhotoUrl ?? CreateProfilePlaceholder("2") });
+		await OpenConversationAsync(profileId);
+		await SaveStateAsync();
+	}
+	private async Task SendMessageAsync()
+	{
+		var text = messageText.Trim();
+		var conversation = ActiveConversation;
+		if (text.Length == 0 || conversation is null || isSendingMessage) return;
+		isSendingMessage = true;
+		chatError = "";
+		try
+		{
+			if (isAuthenticated && ActiveProfile is { IsDemo: false })
+			{
+				using var response = await Http.PostAsJsonAsync("/api/messages", new { RecipientId = conversation.ProfileId, Text = text });
+				if (!response.IsSuccessStatusCode) { chatError = await ReadApiErrorAsync(response, "Le message n'a pas pu être envoyé. Ton brouillon est conservé."); return; }
+				var savedMessage = await response.Content.ReadFromJsonAsync<DirectMessageResponse>();
+				if (savedMessage is null) return;
+				conversation.Messages.Add(new ChatMessage { Text = savedMessage.Text, SentAt = savedMessage.SentAt.LocalDateTime, IsMine = true });
+			}
+			else conversation.Messages.Add(new ChatMessage { Text = text, SentAt = DateTime.Now, IsMine = true });
+			messageDrafts.Remove(conversation.ProfileId);
+			if (activeConversationId == conversation.ProfileId) { messageText = ""; scrollChatToBottom = true; }
+			await SaveStateAsync();
+		}
+		catch (HttpRequestException) { chatError = "Connexion interrompue. Ton message n'a pas été confirmé ; vérifie le fil avant de réessayer."; }
+		finally { isSendingMessage = false; }
+	}
+	private async Task SaveProfileAsync()
+	{
+		state.Name = state.Name.Trim();
+		state.City = state.City.Trim();
+		if (isAuthenticated && !await EnsureRemoteProfileAsync(state.OnboardingComplete)) return;
+		toastMessage = "Ton profil est enregistré sur cet appareil.";
+		await SaveStateAsync();
+	}
+	private async Task UploadAvatarAsync(InputFileChangeEventArgs args)
+	{
+		try
+		{
+			if (isAuthenticated)
+			{
+				var photo = await UploadPhotoToServerAsync(args.File, "public", true);
+				state.AvatarDataUrl = photo.Url;
+				state.AvatarPhotoId = photo.Id.ToString();
+			}
+			else
+			{
+				state.AvatarDataUrl = await CompressPhotoAsync(args.File);
+			}
+			toastMessage = isAuthenticated ? "Photo de profil enregistrée sur le serveur." : "Photo de profil enregistrée sur cet appareil.";
+			await SaveStateAsync();
+		}
+		catch (Exception exception) when (exception is IOException or InvalidDataException or JSException or HttpRequestException or InvalidOperationException)
+		{
+			toastMessage = "Image impossible à enregistrer. Choisis un JPEG, PNG ou WebP de moins de 5 Mo.";
+		}
+	}
+	private async Task AddLibraryPhotosAsync(InputFileChangeEventArgs args)
+	{
+		var photos = ActivePhotoLibrary;
+		var remaining = MaxPhotosPerLibrary - photos.Count;
+		if (remaining <= 0)
+		{
+			toastMessage = $"Cette bibliothèque accepte au maximum {MaxPhotosPerLibrary} photos.";
+			return;
+		}
+
+		IReadOnlyList<IBrowserFile> files;
+		try { files = args.GetMultipleFiles(remaining); }
+		catch (InvalidOperationException)
+		{
+			toastMessage = $"Sélectionne au maximum {remaining} photo(s) supplémentaires.";
+			return;
+		}
+
+		foreach (var file in files)
+		{
+			try
+			{
+				if (isAuthenticated)
+				{
+					var uploaded = await UploadPhotoToServerAsync(file, activePhotoLibrary, false);
+					photos.Add(new ProfilePhoto { Id = uploaded.Id.ToString(), DataUrl = uploaded.Url });
+				}
+				else
+				{
+					photos.Add(new ProfilePhoto { Id = Guid.NewGuid().ToString(), DataUrl = await CompressPhotoAsync(file) });
+				}
+				await SaveStateAsync();
+			}
+			catch (Exception exception) when (exception is IOException or InvalidDataException or JSException or HttpRequestException or InvalidOperationException)
+			{
+				toastMessage = "Une photo n'a pas pu être enregistrée. Essaie une image plus légère.";
+				return;
+			}
+		}
+
+		toastMessage = $"{files.Count} photo(s) ajoutée(s) à la bibliothèque {activePhotoLibrary}{(isAuthenticated ? " sur le serveur" : " sur cet appareil")}.";
+	}
+	private async Task<ProfilePhotoResponse> UploadPhotoToServerAsync(IBrowserFile file, string visibility, bool isAvatar)
+	{
+		await using var stream = file.OpenReadStream(5 * 1024 * 1024);
+		using var multipart = new MultipartFormDataContent();
+		using var fileContent = new StreamContent(stream);
+		fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+		multipart.Add(fileContent, "file", Path.GetFileName(file.Name));
+		var endpoint = $"/api/me/photos?visibility={Uri.EscapeDataString(visibility)}&isAvatar={isAvatar.ToString().ToLowerInvariant()}";
+		using var response = await Http.PostAsync(endpoint, multipart);
+		if (!response.IsSuccessStatusCode) throw new InvalidOperationException(await ReadApiErrorAsync(response, "L'envoi de la photo a échoué."));
+		return await response.Content.ReadFromJsonAsync<ProfilePhotoResponse>() ?? throw new InvalidDataException("Réponse photo invalide.");
+	}
+	private async Task<string> CompressPhotoAsync(IBrowserFile file)
+	{
+		if (file.ContentType is not ("image/jpeg" or "image/png" or "image/webp"))
+			throw new InvalidDataException("Format d'image non pris en charge.");
+
+		await using var input = file.OpenReadStream(5 * 1024 * 1024);
+		using var output = new MemoryStream();
+		await input.CopyToAsync(output);
+		var source = $"data:{file.ContentType};base64,{Convert.ToBase64String(output.ToArray())}";
+		return await JS.InvokeAsync<string>("photoLibrary.compressDataUrl", source, 1200, 0.76);
+	}
+	private async Task RemoveAvatarAsync()
+	{
+		if (isAuthenticated && Guid.TryParse(state.AvatarPhotoId, out var photoId))
+		{
+			using var response = await Http.DeleteAsync($"/api/me/photos/{photoId}");
+			if (!response.IsSuccessStatusCode) { toastMessage = "Impossible de supprimer la photo du serveur."; return; }
+		}
+		state.AvatarDataUrl = null;
+		state.AvatarPhotoId = "";
+		await SaveStateAsync();
+	}
+	private async Task RemoveLibraryPhotoAsync(string id)
+	{
+		if (isAuthenticated)
+		{
+			using var response = await Http.DeleteAsync($"/api/me/photos/{id}");
+			if (!response.IsSuccessStatusCode) { toastMessage = "Impossible de supprimer la photo du serveur."; return; }
+		}
+		ActivePhotoLibrary.RemoveAll(photo => photo.Id == id);
+		await SaveStateAsync();
+	}
+	private async Task LoadRemotePhotoRequestsAsync(CancellationToken cancellationToken = default)
+	{
+		var userId = currentUserId;
+		using var response = await Http.GetAsync("/api/me/photo-requests", cancellationToken);
+		if (!response.IsSuccessStatusCode) return;
+		var requests = await response.Content.ReadFromJsonAsync<List<PhotoRequestResponse>>(cancellationToken) ?? [];
+		if (!isAuthenticated || currentUserId != userId) return;
+		state.PhotoAccessRequests = requests.Select(request => new PhotoAccessRequest { Id = request.Id.ToString(), RequesterName = request.RequesterName, RequesterId = request.RequesterId, RequestedAt = request.CreatedAt.LocalDateTime }).ToList();
+	}
+	private async Task RespondToChatPhotoRequestAsync(string requestId, bool approve)
+	{
+		if (isRespondingToPhotoRequest) return;
+		isRespondingToPhotoRequest = true;
+		try
+		{
+			using var response = await Http.PostAsync($"/api/me/photo-requests/{Uri.EscapeDataString(requestId)}/{(approve ? "approve" : "deny")}", null);
+			if (!response.IsSuccessStatusCode) { chatError = "Impossible de traiter la demande. Réessaie dans un instant."; return; }
+			await LoadRemotePhotoRequestsAsync();
+		}
+		catch (HttpRequestException) { chatError = "Connexion interrompue. La demande n'a pas été confirmée."; }
+		finally { isRespondingToPhotoRequest = false; }
+	}
+	private async Task RequestDemoPhotoAccessAsync()
+	{
+		if (!HasPendingDemoRequest && !HasDemoPrivateAccess)
+			state.PhotoAccessRequests.Add(new PhotoAccessRequest { Id = Guid.NewGuid().ToString(), RequesterName = "Visiteur de démonstration", RequestedAt = DateTime.Now });
+		await SaveStateAsync();
+	}
+	private async Task GrantDemoPhotoAccessAsync(string requestId)
+	{
+		if (isAuthenticated && Guid.TryParse(requestId, out var parsedId))
+		{
+			using var response = await Http.PostAsync($"/api/me/photo-requests/{parsedId}/approve", null);
+			if (!response.IsSuccessStatusCode) { toastMessage = "Impossible d'autoriser cette demande."; return; }
+			await LoadRemotePhotoRequestsAsync();
+			toastMessage = "Accès aux photos privées autorisé pour ce membre.";
+			return;
+		}
+		var request = state.PhotoAccessRequests.FirstOrDefault(item => item.Id == requestId);
+		if (request is not null) request.IsGranted = true;
+		await SaveStateAsync();
+	}
+	private async Task RequestPrivatePhotoAccessAsync(string profileId)
+	{
+		var profile = FindProfile(profileId);
+		if (profile is null || profile.IsDemo) { await RequestDemoPhotoAccessAsync(); return; }
+		using var response = await Http.PostAsync($"/api/profiles/{Uri.EscapeDataString(profileId)}/photo-requests", null);
+		if (!response.IsSuccessStatusCode) { toastMessage = await ReadApiErrorAsync(response, "La demande d'accès n'a pas pu être envoyée."); return; }
+		profile.HasPendingPhotoRequest = true;
+		toastMessage = "Demande envoyée au propriétaire du profil.";
+	}
+	private async Task RequestLocationAsync()
+	{
+		isLocating = true;
+		locationFeedback = "";
+		try
+		{
+			var result = await JS.InvokeAsync<DeviceLocationResult>("deviceLocation.getCurrentPosition");
+			if (!result.Success || result.Latitude is null || result.Longitude is null)
+			{
+				locationFeedback = result.ErrorCode switch { 1 => "Autorisation refusée. Tu peux l'activer dans les réglages du navigateur.", 2 => "Position indisponible sur cet appareil pour le moment.", 3 => "La recherche a expiré. Réessaie dans un instant.", _ => "La géolocalisation n'est pas disponible dans ce navigateur." };
+				return;
+			}
+			if (isAuthenticated)
+			{
+				using var response = await Http.PostAsJsonAsync("/api/me/location", new { Latitude = result.Latitude.Value, Longitude = result.Longitude.Value, AccuracyMeters = result.AccuracyMeters ?? 0 });
+				if (!response.IsSuccessStatusCode)
+				{
+					locationFeedback = await ReadApiErrorAsync(response, "La position n'a pas pu être enregistrée sur le serveur.");
+					return;
+				}
+			}
+			state.Latitude = result.Latitude;
+			state.Longitude = result.Longitude;
+			state.LocationAccuracyMeters = result.AccuracyMeters;
+			locationFeedback = isAuthenticated ? "Position enregistrée sur ton compte. Seule une zone approximative est partagée." : "Position enregistrée sur cet appareil uniquement.";
+			await SaveStateAsync();
+		}
+		catch (JSException) { locationFeedback = "La géolocalisation nécessite un navigateur compatible et HTTPS."; }
+		finally { isLocating = false; }
+	}
+	private async Task ClearLocationAsync()
+	{
+		if (isAuthenticated)
+		{
+			using var response = await Http.DeleteAsync("/api/me/location");
+			if (!response.IsSuccessStatusCode)
+			{
+				locationFeedback = "La position n'a pas pu être supprimée du serveur.";
+				return;
+			}
+		}
+		state.Latitude = null;
+		state.Longitude = null;
+		state.LocationAccuracyMeters = null;
+		locationFeedback = isAuthenticated ? "Position supprimée de ton compte et de cet appareil." : "Position supprimée de cet appareil.";
+		await SaveStateAsync();
+	}
+	private double DistanceFromUser(Profile profile) => profile.IsDemo && state.Latitude is double latitude && state.Longitude is double longitude ? CalculateDistanceKm(latitude, longitude, profile.Latitude, profile.Longitude) : profile.DemoDistanceKm;
+	private static double CalculateDistanceKm(double firstLatitude, double firstLongitude, double secondLatitude, double secondLongitude)
+	{
+		const double earthRadiusKm = 6371.0088;
+		var latitudeDelta = DegreesToRadians(secondLatitude - firstLatitude);
+		var longitudeDelta = DegreesToRadians(secondLongitude - firstLongitude);
+		var haversine = Math.Pow(Math.Sin(latitudeDelta / 2), 2) + Math.Cos(DegreesToRadians(firstLatitude)) * Math.Cos(DegreesToRadians(secondLatitude)) * Math.Pow(Math.Sin(longitudeDelta / 2), 2);
+		return earthRadiusKm * 2 * Math.Asin(Math.Sqrt(Math.Clamp(haversine, 0, 1)));
+	}
+	private static double DegreesToRadians(double degrees) => degrees * Math.PI / 180;
+	private async Task ResetFiltersAsync() { state.RadiusKm = 25; await SaveStateAsync(); }
+	private Task SaveStateAsync()
+	{
+		if (isAuthenticated)
+		{
+			var preferences = JsonSerializer.Serialize(new { state.ProfileDisplayMode });
+			return JS.InvokeVoidAsync("localStorage.setItem", "2gether.preferences.v1", preferences).AsTask();
+		}
+		return JS.InvokeVoidAsync("localStorage.setItem", StorageKey, JsonSerializer.Serialize(state)).AsTask();
+	}
+
+	private sealed class DemoState
+	{
+		public string Name { get; set; } = "";
+		public string AccountEmail { get; set; } = "";
+		public string AccountMode { get; set; } = "create";
+		public bool OnboardingComplete { get; set; }
+		public int Age { get; set; } = 18;
+		public string Gender { get; set; } = "";
+		public string SexualOrientation { get; set; } = "";
+		public string City { get; set; } = "Lyon";
+		public string Occupation { get; set; } = "";
+		public string Education { get; set; } = "";
+		public string About { get; set; } = "";
+		public string Languages { get; set; } = "Français";
+		public string Lifestyle { get; set; } = "";
+		public string LookingFor { get; set; } = "";
+		public string Intent { get; set; } = "Une relation sincère";
+		public int RadiusKm { get; set; } = 5;
+		public string ProfileDisplayMode { get; set; } = "medium";
+		public double? Latitude { get; set; }
+		public double? Longitude { get; set; }
+		public double? LocationAccuracyMeters { get; set; }
+		public string? AvatarDataUrl { get; set; }
+		public string AvatarPhotoId { get; set; } = "";
+		public List<ProfilePhoto> PublicPhotos { get; set; } = [];
+		public List<ProfilePhoto> PrivatePhotos { get; set; } = [];
+		public List<PhotoAccessRequest> PhotoAccessRequests { get; set; } = [];
+		public List<string> Interests { get; set; } = [];
+		public List<string> AffinityReasonIds { get; set; } = [];
+		public List<string> LikedProfileIds { get; set; } = [];
+		public List<string> HiddenProfileIds { get; set; } = [];
+		public List<Conversation> Conversations { get; set; } = [];
+	}
+	private sealed class Profile
+	{
+		public string Id { get; set; } = "";
+		public string Name { get; set; } = "";
+		public int Age { get; set; }
+		public string Gender { get; set; } = "";
+		public string SexualOrientation { get; set; } = "";
+		public string Occupation { get; set; } = "";
+		public string Education { get; set; } = "";
+		public string Area { get; set; } = "";
+		public double DemoDistanceKm { get; set; }
+		public double Latitude { get; set; }
+		public double Longitude { get; set; }
+		public string PhotoUrl { get; set; } = "";
+		public string Bio { get; set; } = "";
+		public string About { get; set; } = "";
+		public string Languages { get; set; } = "";
+		public string Lifestyle { get; set; } = "";
+		public string Intent { get; set; } = "";
+		public string LookingFor { get; set; } = "";
+		public List<string> Interests { get; set; } = [];
+		public bool IsDemo { get; set; } = true;
+		public int PublicPhotoCount { get; set; }
+		public int PrivatePhotoCount { get; set; }
+		public bool HasPendingPhotoRequest { get; set; }
+	}
+	private sealed class Conversation { public string ProfileId { get; set; } = ""; public string ProfileName { get; set; } = ""; public string Area { get; set; } = ""; public double DistanceKm { get; set; } public string PhotoUrl { get; set; } = ""; public List<ChatMessage> Messages { get; set; } = []; }
+	private sealed class ChatMessage { public string Text { get; set; } = ""; public DateTime SentAt { get; set; } public bool IsMine { get; set; } }
+	private sealed class ProfilePhoto { public string Id { get; set; } = ""; public string DataUrl { get; set; } = ""; public int Visibility { get; set; } }
+	private sealed class PhotoAccessRequest { public string Id { get; set; } = ""; public string RequesterId { get; set; } = ""; public string RequesterName { get; set; } = ""; public DateTime RequestedAt { get; set; } public bool IsGranted { get; set; } }
+	private sealed class DeviceLocationResult { public bool Success { get; set; } public int ErrorCode { get; set; } public double? Latitude { get; set; } public double? Longitude { get; set; } public double? AccuracyMeters { get; set; } }
+	private sealed class AccountInfoResponse { public string Email { get; set; } = ""; }
+	private sealed class SessionResponse { public bool IsAuthenticated { get; set; } public string UserId { get; set; } = ""; public string Email { get; set; } = ""; public bool OnboardingComplete { get; set; } }
+	private sealed class DirectMessageResponse { public Guid Id { get; set; } public string SenderId { get; set; } = ""; public string RecipientId { get; set; } = ""; public string Text { get; set; } = ""; public DateTimeOffset SentAt { get; set; } }
+	private sealed class ConversationSummaryResponse { public string OtherUserId { get; set; } = ""; public string DisplayName { get; set; } = ""; public string City { get; set; } = ""; public string LastMessage { get; set; } = ""; public DateTimeOffset LastSentAt { get; set; } }
+	private sealed class OwnProfileResponse
+	{
+		public string UserId { get; set; } = "";
+		public string Email { get; set; } = "";
+		public string DisplayName { get; set; } = "";
+		public int Age { get; set; }
+		public string Gender { get; set; } = "";
+		public string SexualOrientation { get; set; } = "";
+		public string Biography { get; set; } = "";
+		public string City { get; set; } = "";
+		public string Occupation { get; set; } = "";
+		public string Education { get; set; } = "";
+		public string Languages { get; set; } = "";
+		public string Lifestyle { get; set; } = "";
+		public string LookingFor { get; set; } = "";
+		public string Intent { get; set; } = "";
+		public List<string> Interests { get; set; } = [];
+		public List<string> AffinityReasonIds { get; set; } = [];
+		public double? Latitude { get; set; }
+		public double? Longitude { get; set; }
+		public double? LocationAccuracyMeters { get; set; }
+		public bool OnboardingComplete { get; set; }
+	}
+	private sealed record ProfileUpsertRequest(string DisplayName, int Age, string Gender, string SexualOrientation, string Biography, string City, string Occupation, string Education, string Languages, string Lifestyle, string LookingFor, string Intent, IReadOnlyList<string> Interests, IReadOnlyList<string> AffinityReasonIds, bool OnboardingComplete);
+	private sealed class ProfilePhotoResponse { public Guid Id { get; set; } public string Url { get; set; } = ""; public int Visibility { get; set; } public bool IsAvatar { get; set; } }
+	private sealed class PhotoRequestResponse { public Guid Id { get; set; } public string RequesterId { get; set; } = ""; public string RequesterName { get; set; } = ""; public DateTimeOffset CreatedAt { get; set; } }
+	private sealed class PublicProfileResponse
+	{
+		public string UserId { get; set; } = "";
+		public string DisplayName { get; set; } = "";
+		public int Age { get; set; }
+		public string Gender { get; set; } = "";
+		public string SexualOrientation { get; set; } = "";
+		public string Biography { get; set; } = "";
+		public string City { get; set; } = "";
+		public string Occupation { get; set; } = "";
+		public string Education { get; set; } = "";
+		public string Languages { get; set; } = "";
+		public string Lifestyle { get; set; } = "";
+		public string LookingFor { get; set; } = "";
+		public string Intent { get; set; } = "";
+		public List<string> Interests { get; set; } = [];
+		public double DistanceKm { get; set; }
+		public double MapLatitude { get; set; }
+		public double MapLongitude { get; set; }
+		public string? AvatarUrl { get; set; }
+		public int PublicPhotoCount { get; set; }
+		public int PrivatePhotoCount { get; set; }
+		public bool HasPendingPhotoRequest { get; set; }
+	}
+}
