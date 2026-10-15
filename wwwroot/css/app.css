@@ -768,6 +768,25 @@ h1 em { color: var(--coral); }
 .onboarding-next:disabled { cursor: progress; opacity: .65; }
 .onboarding-field [aria-invalid="true"] { border-color: #ffb1b1; }
 .onboarding-field input:focus-visible, .onboarding-field select:focus-visible, .onboarding-field textarea:focus-visible { border-color: var(--lime); outline: 2px solid var(--lime); outline-offset: 2px; }
+.account-recovery-actions { display: grid; gap: 4px; margin-top: 12px; }
+.account-recovery-actions a { color: var(--green); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.account-recovery-actions p { color: var(--muted); font-size: 11px; line-height: 1.5; margin: 0; }
+.passkeys-card, .recovery-card { margin: 24px auto; max-width: 680px; }
+.passkeys-card h1, .recovery-card h1 { font-size: 32px; margin: 0; }
+.passkey-actions { margin: 16px 0; }
+.passkey-actions .onboarding-next { margin-top: 0; }
+.passkey-list-title { color: var(--ink); font-size: 17px; margin: 26px 0 10px; }
+.passkey-list { list-style: none; margin: 0; padding: 0; }
+.passkey-list li { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 18px; justify-content: space-between; padding: 14px 0; }
+.passkey-list li > span { display: grid; gap: 5px; }
+.passkey-list small { color: var(--muted); font-size: 11px; }
+.passkey-list .signout-button { flex: 0 0 auto; }
+.passkey-action { text-decoration: none; }
+.recovery-form { display: grid; gap: 8px; }
+.recovery-divider { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.recovery-card h2 { color: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-size: 23px; font-weight: 400; margin: 0; }
+.registration-step-status { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.recovery-card .onboarding-feedback, .passkeys-card .onboarding-feedback { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
 .registration-password-wrap { position: relative; }
 .registration-password-wrap input { padding-right: 52px; }
 .registration-password-wrap button { background: transparent; border: 0; border-radius: 4px; color: var(--ink); cursor: pointer; font-size: 24px; height: 44px; position: absolute; right: 1px; top: 1px; width: 44px; }

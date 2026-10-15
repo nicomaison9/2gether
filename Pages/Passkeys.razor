@@ -1,0 +1,176 @@
+@page "/passkeys"
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>Mes passkeys - 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card passkeys-card" aria-labelledby="passkeys-title">
+		<a class="back-link" href="/">← Retour à 2gether</a>
+		<p class="eyebrow">SÉCURITÉ DU COMPTE</p>
+		<h1 id="passkeys-title">Mes passkeys.</h1>
+		<p class="onboarding-copy">Une passkey utilise une clé cryptographique propre à ce site. Ton appareil confirme ta présence avec son verrouillage local : empreinte, visage ou code. 2gether ne reçoit ni ne stocke ces données.</p>
+
+		@if (isLoading)
+		{
+			<p role="status">Vérification de la session…</p>
+		}
+		else if (!isAuthenticated)
+		{
+			<p class="onboarding-feedback" role="status">Connecte-toi avec ton mot de passe ou une passkey existante pour gérer tes clés d’accès.</p>
+			<a class="onboarding-next passkey-action" href="/?login=true">Aller à la connexion</a>
+		}
+		else
+		{
+			<div class="passkey-actions">
+				<button class="onboarding-next" type="button" @onclick="RegisterAsync" disabled="@(isBusy || !isSupported)">
+					@(isBusy ? "Enregistrement…" : "Ajouter une passkey sur cet appareil")
+				</button>
+			</div>
+			@if (!isSupported)
+			{
+				<p class="onboarding-feedback" role="status">Ce navigateur ou cette origine ne prend pas en charge les passkeys. Utilise HTTPS ou localhost avec un navigateur récent.</p>
+			}
+			@if (!string.IsNullOrWhiteSpace(feedback))
+			{
+				<p class="onboarding-feedback" role="status">@feedback</p>
+			}
+			<h2 class="passkey-list-title">Clés enregistrées</h2>
+			@if (credentials.Count == 0)
+			{
+				<p class="onboarding-copy">Aucune passkey n’est encore associée à ton compte. Garde ton mot de passe pour te connecter avant d’en ajouter une.</p>
+			}
+			else
+			{
+				<ul class="passkey-list">
+					@foreach (var credential in credentials)
+					{
+						<li @key="credential.Id">
+							<span><strong>Passkey</strong><small>Ajoutée le @credential.CreatedAt.ToLocalTime().ToString("g")@if (credential.LastUsedAt is not null) { <text> · utilisée le @credential.LastUsedAt.Value.ToLocalTime().ToString("g")</text> }</small></span>
+							<button class="signout-button" type="button" @onclick="() => DeleteAsync(credential.Id)" disabled="@isBusy">Supprimer</button>
+						</li>
+					}
+				</ul>
+				<p class="onboarding-copy">Enregistre une autre passkey sur un second appareil avant de supprimer la seule clé que tu utilises.</p>
+			}
+		}
+	</section>
+</main>
+
+@code {
+	private bool isLoading = true;
+	private bool isAuthenticated;
+	private bool isSupported;
+	private bool isBusy;
+	private string feedback = "";
+	private List<PasskeySummary> credentials = [];
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			var session = await Http.GetFromJsonAsync<SessionResponse>("/api/session");
+			isAuthenticated = session?.IsAuthenticated == true;
+			if (isAuthenticated)
+			{
+				isSupported = await JS.InvokeAsync<bool>("passkeys.isSupported");
+				await LoadCredentialsAsync();
+			}
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		catch (JSException)
+		{
+			isSupported = false;
+		}
+		finally { isLoading = false; }
+	}
+
+	private async Task LoadCredentialsAsync()
+	{
+		var response = await Http.GetAsync("/api/passkeys");
+		if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+		{
+			isAuthenticated = false;
+			return;
+		}
+		if (response.IsSuccessStatusCode)
+			credentials = await response.Content.ReadFromJsonAsync<List<PasskeySummary>>() ?? [];
+		else
+			feedback = "La liste des passkeys n’a pas pu être chargée.";
+	}
+
+	private async Task RegisterAsync()
+	{
+		if (isBusy || !isSupported) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var optionsResponse = await Http.PostAsync("/api/passkeys/registration/options", null);
+			if (!optionsResponse.IsSuccessStatusCode)
+			{
+				feedback = optionsResponse.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+					? "Trop de demandes. Patiente une minute avant de réessayer."
+					: "La création de la passkey n’a pas pu être préparée.";
+				return;
+			}
+
+			var ceremony = await optionsResponse.Content.ReadFromJsonAsync<PasskeyStartResponse>();
+			if (ceremony is null) { feedback = "Le serveur n’a pas fourni les options de sécurité nécessaires."; return; }
+			var credential = await JS.InvokeAsync<JsonElement>("passkeys.create", ceremony.Options);
+			using var response = await Http.PostAsJsonAsync("/api/passkeys/registration/complete", new { ceremony.OperationId, Credential = credential });
+			if (!response.IsSuccessStatusCode)
+			{
+				feedback = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests
+					? "Trop de demandes. Patiente une minute avant de réessayer."
+					: "L’appareil n’a pas pu être vérifié. Vérifie que la passkey est disponible, puis recommence.";
+				return;
+			}
+
+			feedback = "Passkey enregistrée. Tu peux maintenant l’utiliser pour te connecter.";
+			await LoadCredentialsAsync();
+		}
+		catch (JSException)
+		{
+			feedback = "La création a été annulée ou n’est pas prise en charge par cet appareil.";
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally { isBusy = false; }
+	}
+
+	private async Task DeleteAsync(string credentialId)
+	{
+		if (isBusy) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.DeleteAsync($"/api/passkeys/{Uri.EscapeDataString(credentialId)}");
+			if (response.IsSuccessStatusCode)
+			{
+				credentials.RemoveAll(credential => credential.Id == credentialId);
+				feedback = "Passkey supprimée.";
+			}
+			else
+				feedback = "Cette passkey n’a pas pu être supprimée.";
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally { isBusy = false; }
+	}
+
+	private sealed class SessionResponse { public bool IsAuthenticated { get; set; } }
+	private sealed class PasskeyStartResponse { public string OperationId { get; set; } = ""; public JsonElement Options { get; set; } }
+	private sealed class PasskeySummary { public string Id { get; set; } = ""; public DateTimeOffset CreatedAt { get; set; } public DateTimeOffset? LastUsedAt { get; set; } }
+}

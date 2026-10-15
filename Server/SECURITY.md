@@ -4,8 +4,9 @@
 
 - Identity password hashing, lockout, HttpOnly cookies and Secure cookies outside Development.
 - Login requires confirmed email. The default API authorization policy also checks the current user's EmailConfirmed state, including for previously issued sessions. Unconfirmed profiles and photos are excluded from discovery and viewing.
-- Credential and resend endpoints limited to 8 requests per IP per minute; Identity GET endpoints have a separate 30-request quota. Messages and photo uploads each limited to 30 requests per authenticated user per minute.
-- Email confirmation uses Identity tokens valid for one hour. SMTP uses mandatory TLS and a configured public origin, not a client-controlled Host header. Unknown-account resend responses do not disclose account existence.
+- Credential and passkey endpoints limited to 8 requests per IP per minute; account-recovery endpoints have a separate 5-request quota and Identity GET endpoints a 30-request quota. Messages and photo uploads each limited to 30 requests per authenticated user per minute.
+- Email confirmation and password recovery use Identity tokens valid for one hour. Recovery responses do not disclose account existence; reset codes are single-use. SMTP uses mandatory TLS and a configured public origin, not a client-controlled Host header.
+- Passkeys use FIDO2/WebAuthn server-side verification with discoverable credentials and `userVerification=required`. Raw biometric data never reaches the app. Public keys are stored per user; challenge records are random, single-use, expire after five minutes and are held in process memory. Registration requires an authenticated, confirmed-email session.
 - JPEG, PNG and WebP uploads decoded and reencoded as JPEG on the server. EXIF, GPS and other metadata removed; maximum input 5 MiB, 24 million pixels and 12000 pixels on either edge. Output fits inside 1600 by 1600 pixels.
 - Only one avatar is retained. Public and private libraries each allow four additional photos. A SQLite transaction serializes quota checks and writes.
 - Public coordinates snapped to a 0.005-degree grid (about 550 m north-south and 350-400 m east-west in mainland France). Distances and search inclusion use these approximate coordinates, not exact coordinates; distances rounded to 100 m. The displayed increment is not an accuracy guarantee: the combined position error can reach roughly 700 m in France. This neighborhood-scale precision reveals a smaller area and does not guarantee anonymity. Changing exact coordinates inside the same cell does not change public distance or search inclusion.
@@ -57,3 +58,13 @@ For real delivery configure the following environment variables in the hosting p
 The application refuses to start in Production without a valid HTTPS origin and SMTP configuration. Never disable certificate validation or expose a development mailbox endpoint. Configure sender-domain SPF/DKIM/DMARC with the provider and verify delivery to real mailboxes before public release.
 
 Existing accounts are not marked confirmed automatically: their owners must request a confirmation link from the login form. Inactive accounts may still exist in AspNetUsers, but cannot log in or appear as active profiles. Retention/cleanup of abandoned registrations is a separate policy to define before deployment.
+
+Password recovery uses the Identity `forgotPassword` and `resetPassword` endpoints. In Development, the reset code is written to the same private pickup directory as confirmation mail. Protect those `.eml` files as temporary credentials.
+
+## Passkey deployment requirements
+
+The WebAuthn relying-party ID and permitted origin are derived from `Email:PublicOrigin`. It must exactly match the public browser origin, including a non-default port. Public sites must use HTTPS; only loopback HTTP is allowed in Development. User verification is required, so the device must verify the user locally with a biometric, device PIN, or compatible authenticator.
+
+`PasskeyChallengeStore` is per-process memory, bounded to 4,096 outstanding operations, and operations expire after five minutes. Run one server instance until challenge storage is moved to a shared atomic store; do not assume a load balancer's affinity provides durable multi-instance correctness. Build and publish with `dotnet publish Server/TwoGether.Server.csproj -c Release`; the client static assets are copied into the publish directory.
+
+See the French [user manual](../MANUEL-UTILISATEUR.md) and [installation manual](../MANUEL-INSTALLATION.md) for complete operating instructions.
