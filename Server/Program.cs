@@ -7,6 +7,10 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.AspNetCore.StaticFiles;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Antiforgery;
+using System.Net;
 using TwoGether.Server;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,6 +25,44 @@ if (!MimeKit.MailboxAddress.TryParse(emailOptions.FromAddress, out _)
 	|| (emailOptions.Delivery == "PickupDirectory" && !builder.Environment.IsDevelopment())
 	|| (emailOptions.Delivery == "Smtp" && (string.IsNullOrWhiteSpace(emailOptions.Host) || emailOptions.Port is < 1 or > 65535)))
 	throw new InvalidOperationException("Configure Email delivery and FromAddress. PickupDirectory is allowed only in Development; SMTP requires a host and TLS port.");
+var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
+if (builder.Environment.IsProduction()
+	&& (string.IsNullOrWhiteSpace(dataProtectionKeysPath) || !Path.IsPathRooted(dataProtectionKeysPath)))
+	throw new InvalidOperationException("Configure DataProtection:KeysPath as an absolute persistent path in Production.");
+if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+{
+	dataProtectionKeysPath = Path.GetFullPath(dataProtectionKeysPath);
+	Directory.CreateDirectory(dataProtectionKeysPath);
+}
+var trustedProxies = new List<IPAddress>();
+foreach (var configuredAddress in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+{
+	if (!IPAddress.TryParse(configuredAddress, out var address))
+		throw new InvalidOperationException($"Invalid ForwardedHeaders:KnownProxies address: {configuredAddress}");
+	trustedProxies.Add(address);
+}
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+	options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+	options.ForwardLimit = 1;
+	options.KnownProxies.Clear();
+	options.KnownIPNetworks.Clear();
+	foreach (var proxy in trustedProxies)
+		options.KnownProxies.Add(proxy);
+});
+builder.Services.AddAntiforgery(options =>
+{
+	options.HeaderName = "X-CSRF-TOKEN";
+	options.Cookie.Name = ".2gether.Antiforgery";
+	options.Cookie.HttpOnly = true;
+	options.Cookie.SameSite = SameSiteMode.Strict;
+	options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+		? CookieSecurePolicy.SameAsRequest
+		: CookieSecurePolicy.Always;
+});
+var dataProtection = builder.Services.AddDataProtection().SetApplicationName("2gether");
+if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+	dataProtection.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
 builder.Services.AddSingleton(emailOptions);
 builder.Services.AddTransient<IEmailSender<AppUser>, VerificationEmailSender>();
 builder.Services.Configure<DataProtectionTokenProviderOptions>(options => options.TokenLifespan = TimeSpan.FromHours(1));
@@ -108,7 +150,10 @@ if (File.Exists(Path.Combine(publishedWwwroot, "index.html")) && Directory.Exist
 }
 else
 {
-	var clientWwwroot = new[] { "Debug", "Release" }
+	var serverConfiguration = Directory.GetParent(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))?.Name;
+	var clientWwwroot = new[] { serverConfiguration, "Debug", "Release" }
+		.OfType<string>()
+		.Distinct(StringComparer.OrdinalIgnoreCase)
 		.Select(configuration => Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "bin", configuration, "net10.0", "wwwroot")))
 		.FirstOrDefault(Directory.Exists);
 	if (clientWwwroot is null)
@@ -126,6 +171,7 @@ using (var scope = app.Services.CreateScope())
 	await DatabaseMigrationRunner.MigrateAsync(database);
 }
 
+app.UseForwardedHeaders();
 app.Use(async (context, next) =>
 {
 	try { await next(context); }
@@ -145,6 +191,27 @@ app.Use(async (context, next) =>
 	{
 		context.Response.Headers.CacheControl = "no-store";
 		context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+	}
+	await next(context);
+});
+app.Use(async (context, next) =>
+{
+	if (context.Request.Path.StartsWithSegments("/api")
+		&& !HttpMethods.IsGet(context.Request.Method)
+		&& !HttpMethods.IsHead(context.Request.Method)
+		&& !HttpMethods.IsOptions(context.Request.Method)
+		&& !HttpMethods.IsTrace(context.Request.Method))
+	{
+		try
+		{
+			await context.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(context);
+		}
+		catch (AntiforgeryValidationException)
+		{
+			context.Response.StatusCode = StatusCodes.Status400BadRequest;
+			await context.Response.WriteAsJsonAsync(new { error = "La requête a expiré ou son jeton de sécurité est invalide. Recharge la page et réessaie." });
+			return;
+		}
 	}
 	await next(context);
 });

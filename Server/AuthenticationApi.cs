@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Antiforgery;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Identity;
@@ -17,6 +18,12 @@ public static class AuthenticationApi
 
 	public static void MapAuthenticationApi(this WebApplication app)
 	{
+		app.MapGet("/api/security/csrf-token", (HttpContext context, IAntiforgery antiforgery) =>
+		{
+			var tokens = antiforgery.GetAndStoreTokens(context);
+			return Results.Ok(new { RequestToken = tokens.RequestToken });
+		}).AllowAnonymous();
+
 		app.MapGroup("/api/auth").RequireRateLimiting("auth").MapIdentityApi<AppUser>();
 		app.MapPost("/api/auth/logout", async (SignInManager<AppUser> signInManager) =>
 		{

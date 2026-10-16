@@ -128,12 +128,19 @@ Configurer les variables d’environnement sur la plateforme d’hébergement, p
 | `Email__Username` | Identifiant SMTP si requis |
 | `Email__Password` | Secret SMTP, à stocker dans le coffre de secrets de l’hébergeur |
 | `TWOGETHER_DB_PATH` | Chemin absolu vers un fichier SQLite persistant et sauvegardé |
+| `DataProtection__KeysPath` | Chemin absolu vers un répertoire persistant et protégé; obligatoire en Production |
+| `ForwardedHeaders__KnownProxies__0` | Adresse IP du proxy inverse de confiance, si l’application est derrière un proxy; ajouter un index par proxy connu |
 
 Le nom de domaine WebAuthn (`RPID`) et les origines autorisées proviennent de `Email__PublicOrigin`. Configurer cette valeur sur la même origine que celle affichée au navigateur ; ne pas accepter une origine issue d’un en-tête fourni librement par le client. Avec un proxy inverse, n’exposer que le proxy en HTTPS et limiter/valider les en-têtes transférés conformément à la configuration de l’hébergeur.
+
+Les adresses transmises (`X-Forwarded-For` et `X-Forwarded-Proto`) ne sont prises en compte que si elles proviennent d’une adresse configurée dans `ForwardedHeaders__KnownProxies__*`. Un proxy non déclaré n’est pas approuvé et ses en-têtes ne modifient ni l’adresse client ni le schéma détectés.
+
+Toutes les mutations de l’API utilisent un jeton antiforgery transmis dans l’en-tête `X-CSRF-TOKEN`. Le client Blazor récupère ce jeton avant chaque requête qui modifie des données. Ne pas désactiver ce contrôle sur les nouveaux endpoints.
 
 ### Persistance et mises à jour
 
 - Le serveur applique les migrations EF Core au démarrage. Une nouvelle base est créée par la migration initiale; les migrations suivantes ne doivent pas supprimer de données sans procédure explicite.
+- En Production, `DataProtection__KeysPath` est obligatoire. Le répertoire doit être durable entre redémarrages, accessible en écriture uniquement au compte de service et protégé par le chiffrement du stockage de l’hébergeur. Sans ce répertoire, le serveur refuse de démarrer en Production.
 - Les bases créées par une version antérieure à EF Core n’ont pas d’historique de migration. Arrêter le serveur et faire une copie de sauvegarde avant toute opération. Après vérification que le schéma existant correspond bien à `InitialSchema` (y compris `PasskeyCredentials`), exécuter depuis la racine :
 
   ```powershell

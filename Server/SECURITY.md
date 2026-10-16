@@ -12,6 +12,9 @@
 - Public coordinates snapped to a 0.005-degree grid (about 550 m north-south and 350-400 m east-west in mainland France). Distances and search inclusion use these approximate coordinates, not exact coordinates; distances rounded to 100 m. The displayed increment is not an accuracy guarantee: the combined position error can reach roughly 700 m in France. This neighborhood-scale precision reveals a smaller area and does not guarantee anonymity. Changing exact coordinates inside the same cell does not change public distance or search inclusion.
 - Photo ownership and private album authorization checked on the server. Private grants expire after 30 days.
 - API responses marked no-store and nosniff. Authentication failures return HTTP 401/403 instead of redirecting to the app.
+- Every unsafe `/api` request requires an ASP.NET Core antiforgery request token in the `X-CSRF-TOKEN` header; the Blazor client obtains a fresh token before each mutation. The antiforgery cookie is HttpOnly, SameSite=Strict and Secure outside Development.
+- Production startup requires an absolute `DataProtection:KeysPath` and persists the application key ring there. Protect the mounted directory with restrictive permissions and the hosting provider's storage encryption.
+- Forwarded `X-Forwarded-For` and `X-Forwarded-Proto` headers are processed only from IPs explicitly configured under `ForwardedHeaders:KnownProxies`; one proxy hop is accepted.
 - SQLite native dependency updated to a version beyond the CVE-2025-6965 affected range.
 
 ## Verification
@@ -33,9 +36,9 @@ The regression test starts a local server on an ephemeral port with a temporary 
 - Persist and protect Identity Data Protection keys; restrict database and backup file access. Data in SQLite, including exact coordinates and messages, is not application-encrypted or end-to-end encrypted.
 - Existing images stored before these changes are not automatically reencoded. Remove or securely reprocess them before public deployment.
 - Add abuse reporting, blocking, moderation, account deletion and appropriate privacy/consent settings for sensitive dating data. Confirmed mailboxes are not proof of real identity and do not prevent disposable addresses or automated accounts.
-- Review CSRF protections for cookie-authenticated mutations. Upload antiforgery is currently disabled; SameSite=Lax is not a replacement for a full threat-model review.
+- Keep the antiforgery token header on every new cookie-authenticated mutation; SameSite cookies remain defense in depth, not a replacement for the token.
 - Monitor disk usage and traffic, and test backups and restores. Per-process quotas alone do not prevent distributed abuse or unlimited account creation over time.
-- Review dependency advisories regularly and plan migration to a supported .NET LTS release.
+- Review dependency advisories regularly and keep .NET and its dependencies on supported releases.
 
 These checks address specific regressions, not a complete penetration test or a security certification.
 

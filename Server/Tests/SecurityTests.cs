@@ -259,6 +259,9 @@ public sealed class SecurityTests
             using var anonymous = CreateClient(address);
             using var owner = CreateClient(address);
             await WaitForServerAsync(anonymous, server);
+            using (var withoutCsrf = new HttpClient { BaseAddress = address })
+            using (var rejectedMutation = await withoutCsrf.PostAsync("/api/passkeys/login/options", null))
+                Assert.Equal(HttpStatusCode.BadRequest, rejectedMutation.StatusCode);
             await CreateAccountAsync(owner, "recovery@security.invalid", mailDirectory);
 
             var mailCount = Directory.GetFiles(mailDirectory, "*.eml").Length;
@@ -365,7 +368,45 @@ public sealed class SecurityTests
         }
     }
 
-    private static HttpClient CreateClient(Uri address) => new(new HttpClientHandler { CookieContainer = new CookieContainer(), AllowAutoRedirect = false }) { BaseAddress = address };
+    private static HttpClient CreateClient(Uri address)
+    {
+        var handler = new TestAntiforgeryHandler
+        {
+            InnerHandler = new HttpClientHandler
+            {
+                CookieContainer = new CookieContainer(),
+                AllowAutoRedirect = false
+            }
+        };
+        return new HttpClient(handler) { BaseAddress = address };
+    }
+
+    private sealed class TestAntiforgeryHandler : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Get
+                && request.Method != HttpMethod.Head
+                && request.Method != HttpMethod.Options
+                && request.Method != HttpMethod.Trace)
+            {
+                using var tokenRequest = new HttpRequestMessage(
+                    HttpMethod.Get,
+                    new Uri(request.RequestUri!, "/api/security/csrf-token"));
+                using var tokenResponse = await base.SendAsync(tokenRequest, cancellationToken);
+                tokenResponse.EnsureSuccessStatusCode();
+                var tokens = await tokenResponse.Content.ReadFromJsonAsync<JsonElement>(
+                    cancellationToken: cancellationToken);
+                request.Headers.TryAddWithoutValidation(
+                    "X-CSRF-TOKEN",
+                    tokens.GetProperty("requestToken").GetString());
+            }
+
+            return await base.SendAsync(request, cancellationToken);
+        }
+    }
 
     private static async Task<string> CreateAccountAsync(HttpClient client, string email, string mailDirectory)
     {

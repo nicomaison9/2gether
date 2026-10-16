@@ -1,0 +1,30 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore and audit dependencies
+        run: dotnet restore Server/Tests/TwoGether.SecurityTests.csproj -p:NuGetAudit=true -p:NuGetAuditLevel=low -p:TreatWarningsAsErrors=true
+      - name: Check vulnerable packages
+        run: dotnet list Server/Tests/TwoGether.SecurityTests.csproj package --vulnerable --include-transitive
+      - name: Build
+        run: dotnet build Server/Tests/TwoGether.SecurityTests.csproj --configuration Release --no-restore
+      - name: Test
+        run: dotnet test Server/Tests/TwoGether.SecurityTests.csproj --configuration Release --no-build
+      - name: Publish
+        run: dotnet publish Server/TwoGether.Server.csproj --configuration Release --no-build --output artifacts/publish
