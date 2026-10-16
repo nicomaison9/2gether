@@ -575,7 +575,11 @@ public static class TwoGetherApi
 	private static async Task<IResult> GetPhotoRequestsAsync(ClaimsPrincipal principal, AppDbContext db, UserManager<AppUser> users)
 	{
 		var ownerId = GetUserId(principal);
-		var requests = (await db.PhotoAccessRequests.AsNoTracking().Where(request => request.OwnerId == ownerId && !request.IsGranted).ToListAsync()).OrderBy(request => request.CreatedAt);
+		var requests = (await db.PhotoAccessRequests.AsNoTracking()
+			.Where(request => request.OwnerId == ownerId && !request.IsGranted
+				&& !db.UserBlocks.Any(block => (block.BlockerId == ownerId && block.BlockedUserId == request.RequesterId)
+					|| (block.BlockerId == request.RequesterId && block.BlockedUserId == ownerId)))
+			.ToListAsync()).OrderBy(request => request.CreatedAt);
 		var response = new List<PhotoRequestResponse>();
 		foreach (var request in requests)
 		{
@@ -591,6 +595,12 @@ public static class TwoGetherApi
 		var ownerId = GetUserId(principal);
 		var request = await db.PhotoAccessRequests.SingleOrDefaultAsync(item => item.Id == requestId && item.OwnerId == ownerId);
 		if (request is null) return Results.NotFound();
+		if (await IsBlockedAsync(db, ownerId, request.RequesterId))
+		{
+			db.PhotoAccessRequests.Remove(request);
+			await db.SaveChangesAsync();
+			return Results.NotFound();
+		}
 		request.IsGranted = true;
 		request.GrantedAt = DateTimeOffset.UtcNow;
 		await db.SaveChangesAsync();

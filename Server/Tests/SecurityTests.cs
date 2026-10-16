@@ -482,6 +482,30 @@ public sealed class SecurityTests
             Assert.Equal(reporterId, queue[0].GetProperty("reporterId").GetString());
             Assert.Equal(targetId, queue[0].GetProperty("reportedUserId").GetString());
 
+			using var image = new MagickImage(MagickColors.Blue, 32, 32);
+			var imageBytes = image.ToByteArray(MagickFormat.Png);
+			using var targetPrivateUpload = await UploadAsync(target, imageBytes, "private", false);
+			Assert.Equal(HttpStatusCode.Created, targetPrivateUpload.StatusCode);
+			var targetPrivatePhoto = await targetPrivateUpload.Content.ReadFromJsonAsync<JsonElement>();
+			var targetPrivateUrl = targetPrivatePhoto.GetProperty("url").GetString()!;
+			using var targetPublicUpload = await UploadAsync(target, imageBytes, "public", false);
+			Assert.Equal(HttpStatusCode.Created, targetPublicUpload.StatusCode);
+			var targetPublicUrl = (await targetPublicUpload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("url").GetString()!;
+			using var reporterPrivateUpload = await UploadAsync(reporter, imageBytes, "private", false);
+			Assert.Equal(HttpStatusCode.Created, reporterPrivateUpload.StatusCode);
+			var reporterPrivateUrl = (await reporterPrivateUpload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("url").GetString()!;
+
+			using var grantedAccessRequest = await reporter.PostAsync($"/api/profiles/{targetId}/photo-requests", null);
+			Assert.Equal(HttpStatusCode.Created, grantedAccessRequest.StatusCode);
+			var grantedRequestId = (await grantedAccessRequest.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+			Assert.Equal(HttpStatusCode.NoContent, (await target.PostAsync($"/api/me/photo-requests/{grantedRequestId}/approve", null)).StatusCode);
+			Assert.Equal(HttpStatusCode.OK, (await reporter.GetAsync(targetPrivateUrl)).StatusCode);
+
+			using var pendingAccessRequest = await target.PostAsync($"/api/profiles/{reporterId}/photo-requests", null);
+			Assert.Equal(HttpStatusCode.Created, pendingAccessRequest.StatusCode);
+			var pendingRequestId = (await pendingAccessRequest.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+			Assert.Single((await reporter.GetFromJsonAsync<JsonElement>("/api/me/photo-requests")).EnumerateArray());
+
             Assert.Equal(HttpStatusCode.Created, (await reporter.PostAsJsonAsync("/api/messages", new
             {
                 RecipientId = targetId,
@@ -493,6 +517,15 @@ public sealed class SecurityTests
 			Assert.Equal("Message avant le blocage.", conversations[0].GetProperty("lastMessage").GetString());
             Assert.Equal(HttpStatusCode.NoContent, (await reporter.PostAsync($"/api/profiles/{targetId}/block", null)).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync($"/api/profiles/{targetId}")).StatusCode);
+			Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync($"/api/profiles/{targetId}/photos")).StatusCode);
+			Assert.Equal(HttpStatusCode.NotFound, (await target.GetAsync($"/api/profiles/{reporterId}/photos")).StatusCode);
+			Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync(targetPublicUrl)).StatusCode);
+			Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync(targetPrivateUrl)).StatusCode);
+			Assert.Equal(HttpStatusCode.NotFound, (await target.GetAsync(reporterPrivateUrl)).StatusCode);
+			Assert.Equal(HttpStatusCode.NotFound, (await reporter.PostAsync($"/api/me/photo-requests/{pendingRequestId}/approve", null)).StatusCode);
+			Assert.Empty((await reporter.GetFromJsonAsync<JsonElement>("/api/me/photo-requests")).EnumerateArray());
+			Assert.Empty((await target.GetFromJsonAsync<JsonElement>("/api/me/photo-requests")).EnumerateArray());
+			Assert.Equal(HttpStatusCode.NotFound, (await target.PostAsync($"/api/profiles/{reporterId}/photo-requests", null)).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync($"/api/messages/{targetId}")).StatusCode);
             Assert.Empty((await reporter.GetFromJsonAsync<JsonElement>("/api/conversations")).EnumerateArray());
             Assert.Equal(HttpStatusCode.NotFound, (await reporter.PostAsJsonAsync("/api/messages", new
@@ -506,6 +539,8 @@ public sealed class SecurityTests
             Assert.Equal(1, (await blocksResponse.Content.ReadFromJsonAsync<JsonElement>()).GetArrayLength());
             Assert.Equal(HttpStatusCode.NoContent, (await reporter.DeleteAsync($"/api/me/blocks/{targetId}")).StatusCode);
             Assert.Equal(HttpStatusCode.OK, (await reporter.GetAsync($"/api/profiles/{targetId}")).StatusCode);
+			Assert.Equal(HttpStatusCode.OK, (await reporter.GetAsync(targetPublicUrl)).StatusCode);
+			Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync(targetPrivateUrl)).StatusCode);
 
             using var decision = await moderator.PostAsJsonAsync($"/api/moderation/reports/{reportId}/decision", new
             {
