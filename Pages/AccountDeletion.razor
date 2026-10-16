@@ -1,0 +1,94 @@
+@page "/compte/supprimer"
+@using System.Net
+@using System.Net.Http.Json
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>Supprimer mon compte - 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card recovery-card" aria-labelledby="deletion-title">
+		<a class="back-link" href="/">← Retour à 2gether</a>
+		<p class="eyebrow">GESTION DU COMPTE</p>
+		<h1 id="deletion-title">Supprimer ton compte.</h1>
+		<p class="onboarding-copy">Cette action est définitive. Ton profil, tes photos, tes passkeys, tes demandes de photos et les messages envoyés ou reçus seront supprimés.</p>
+		<p class="registration-step-status">Pour confirmer que tu es bien à l’origine de cette demande, saisis ton mot de passe actuel. La suppression déconnectera cet appareil.</p>
+		<form class="recovery-form" @onsubmit="DeleteAccountAsync" @onsubmit:preventDefault>
+			<div class="onboarding-field">
+				<label for="delete-account-password">Mot de passe actuel</label>
+				<input id="delete-account-password" type="password" @bind="password" autocomplete="current-password" required />
+			</div>
+			<label class="onboarding-privacy">
+				<input type="checkbox" @bind="confirmed" />
+				Je comprends que la suppression est définitive.
+			</label>
+			<button class="onboarding-next" type="submit" disabled="@(isBusy || !confirmed)">
+				@(isBusy ? "Suppression…" : "Supprimer définitivement mon compte")
+			</button>
+		</form>
+		@if (!string.IsNullOrWhiteSpace(feedback))
+		{
+			<p class="onboarding-feedback" role="status">@feedback</p>
+		}
+	</section>
+</main>
+
+@code {
+	private string password = "";
+	private string feedback = "";
+	private bool confirmed;
+	private bool isBusy;
+
+	private async Task DeleteAccountAsync()
+	{
+		if (isBusy || !confirmed || string.IsNullOrWhiteSpace(password)) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var request = new HttpRequestMessage(HttpMethod.Delete, "/api/me/account")
+			{
+				Content = JsonContent.Create(new DeleteAccountRequest(password))
+			};
+			using var response = await Http.SendAsync(request);
+			if (response.StatusCode == HttpStatusCode.Unauthorized)
+			{
+				feedback = "Le mot de passe est incorrect ou ta session a expiré. Vérifie-le et réessaie.";
+				return;
+			}
+			if (response.StatusCode == HttpStatusCode.TooManyRequests)
+			{
+				feedback = "Trop de tentatives. Patiente une minute avant de réessayer.";
+				return;
+			}
+			if (!response.IsSuccessStatusCode)
+			{
+				feedback = "Le compte n’a pas pu être supprimé. Réessaie plus tard ou contacte l’assistance.";
+				return;
+			}
+
+			password = "";
+			try
+			{
+				await JS.InvokeVoidAsync("localStorage.removeItem", "adeux.demo.v1");
+				Navigation.NavigateTo("/", forceLoad: true);
+			}
+			catch (JSException)
+			{
+				feedback = "Le compte est supprimé, mais les données conservées dans ce navigateur n’ont pas pu être effacées. Supprime le stockage local de 2gether dans les paramètres du navigateur.";
+			}
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Vérifie ta connexion avant de réessayer.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private sealed record DeleteAccountRequest(string Password);
+}

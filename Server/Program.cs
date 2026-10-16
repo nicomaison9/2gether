@@ -122,6 +122,9 @@ builder.Services.AddRateLimiter(options =>
 			PermitLimit = Category(context.Request) == "confirmation" ? 30 : Category(context.Request) == "recovery" ? 5 : 8,
 			Window = TimeSpan.FromMinutes(1), QueueLimit = 0
 		}));
+	options.AddPolicy("account-deletion", context => RateLimitPartition.GetFixedWindowLimiter(
+		"context:" + (context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
+		_ => new FixedWindowRateLimiterOptions { PermitLimit = 3, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 	options.AddPolicy("messages", context => RateLimitPartition.GetFixedWindowLimiter(
 		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
 		{

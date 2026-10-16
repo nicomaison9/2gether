@@ -29,6 +29,7 @@ public static class TwoGetherApi
 		var me = app.MapGroup("/api/me").RequireAuthorization();
 		me.MapGet("/profile", GetOwnProfileAsync);
 		me.MapPut("/profile", SaveOwnProfileAsync);
+		me.MapDelete("/account", DeleteOwnAccountAsync).RequireRateLimiting("account-deletion");
 		me.MapPost("/location", SaveLocationAsync);
 		me.MapDelete("/location", ClearLocationAsync);
 		me.MapGet("/photos", GetOwnPhotosAsync);
@@ -46,6 +47,53 @@ public static class TwoGetherApi
 		app.MapGet("/api/messages/{otherUserId}", GetConversationAsync).RequireAuthorization();
 		app.MapGet("/api/conversations", GetConversationsAsync).RequireAuthorization();
 		app.MapPost("/api/messages", SendMessageAsync).RequireAuthorization().RequireRateLimiting("messages");
+	}
+
+	private static async Task<IResult> DeleteOwnAccountAsync(
+		HttpContext context,
+		ClaimsPrincipal principal,
+		[FromBody] DeleteAccountRequest request,
+		AppDbContext db,
+		UserManager<AppUser> users,
+		SignInManager<AppUser> signInManager,
+		ILoggerFactory loggerFactory)
+	{
+		if (string.IsNullOrWhiteSpace(request.Password))
+			return Results.BadRequest(new { error = "Le mot de passe actuel est obligatoire." });
+
+		var user = await users.GetUserAsync(principal);
+		if (user is null) return Results.Unauthorized();
+		var passwordCheck = await signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
+		if (!passwordCheck.Succeeded)
+			return Results.Unauthorized();
+
+		await using var transaction = await db.Database.BeginTransactionAsync(context.RequestAborted);
+		var userId = user.Id;
+		await db.DirectMessages
+			.Where(message => message.SenderId == userId || message.RecipientId == userId)
+			.ExecuteDeleteAsync(context.RequestAborted);
+		await db.PhotoAccessRequests
+			.Where(photoRequest => photoRequest.OwnerId == userId || photoRequest.RequesterId == userId)
+			.ExecuteDeleteAsync(context.RequestAborted);
+		await db.ProfilePhotos.Where(photo => photo.OwnerId == userId).ExecuteDeleteAsync(context.RequestAborted);
+		await db.PasskeyCredentials.Where(credential => credential.UserId == userId).ExecuteDeleteAsync(context.RequestAborted);
+		await db.UserProfiles.Where(profile => profile.UserId == userId).ExecuteDeleteAsync(context.RequestAborted);
+
+		var deleteResult = await users.DeleteAsync(user);
+		if (!deleteResult.Succeeded)
+		{
+			await transaction.RollbackAsync(context.RequestAborted);
+			var logger = loggerFactory.CreateLogger("TwoGether.AccountDeletion");
+			logger.LogError("Account deletion failed for user {UserId}: {Errors}", userId,
+				string.Join(", ", deleteResult.Errors.Select(error => $"{error.Code}: {error.Description}")));
+			return Results.Problem(
+				"Le compte n’a pas pu être supprimé. Réessaie plus tard ou contacte l’assistance.",
+				statusCode: StatusCodes.Status500InternalServerError);
+		}
+
+		await transaction.CommitAsync(context.RequestAborted);
+		await signInManager.SignOutAsync();
+		return Results.NoContent();
 	}
 
 	private static async Task<IResult> GetOwnProfileAsync(ClaimsPrincipal principal, AppDbContext db, UserManager<AppUser> users)

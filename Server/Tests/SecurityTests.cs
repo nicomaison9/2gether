@@ -215,6 +215,53 @@ public sealed class SecurityTests
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT sqlite_version()";
             Assert.True(Version.Parse((string)(await command.ExecuteScalarAsync())!) >= new Version(3, 50, 2));
+
+            var deletionOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite($"Data Source={databasePath}")
+                .Options;
+            await using (var seed = new AppDbContext(deletionOptions))
+            {
+                seed.PasskeyCredentials.Add(new PasskeyCredential
+                {
+                    CredentialId = "deletion-test-credential",
+                    UserId = ownerId,
+                    PublicKey = [1],
+                    UserHandle = [1]
+                });
+                await seed.SaveChangesAsync();
+            }
+
+            using (var invalidDeletion = await owner.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/me/account")
+            {
+                Content = JsonContent.Create(new { Password = "Incorrect-password-123" })
+            }))
+                Assert.Equal(HttpStatusCode.Unauthorized, invalidDeletion.StatusCode);
+            Assert.True((await owner.GetFromJsonAsync<JsonElement>("/api/session")).GetProperty("isAuthenticated").GetBoolean());
+
+            using (var deletion = await owner.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/me/account")
+            {
+                Content = JsonContent.Create(new { Password = "Security-check-12345" })
+            }))
+                Assert.Equal(HttpStatusCode.NoContent, deletion.StatusCode);
+            Assert.False((await owner.GetFromJsonAsync<JsonElement>("/api/session")).GetProperty("isAuthenticated").GetBoolean());
+
+            await using var verifyDeletion = new SqliteConnection($"Data Source={databasePath};Mode=ReadOnly");
+            await verifyDeletion.OpenAsync();
+            await using var verifyCommand = verifyDeletion.CreateCommand();
+            verifyCommand.CommandText = """
+                SELECT
+                    (SELECT COUNT(*) FROM "AspNetUsers" WHERE "Id" = $userId),
+                    (SELECT COUNT(*) FROM "UserProfiles" WHERE "UserId" = $userId),
+                    (SELECT COUNT(*) FROM "ProfilePhotos" WHERE "OwnerId" = $userId),
+                    (SELECT COUNT(*) FROM "PasskeyCredentials" WHERE "UserId" = $userId),
+                    (SELECT COUNT(*) FROM "PhotoAccessRequests" WHERE "OwnerId" = $userId OR "RequesterId" = $userId),
+                    (SELECT COUNT(*) FROM "DirectMessages" WHERE "SenderId" = $userId OR "RecipientId" = $userId);
+                """;
+            verifyCommand.Parameters.AddWithValue("$userId", ownerId);
+            await using var verifyReader = await verifyCommand.ExecuteReaderAsync();
+            Assert.True(await verifyReader.ReadAsync());
+            for (var column = 0; column < verifyReader.FieldCount; column++)
+                Assert.Equal(0L, verifyReader.GetInt64(column));
         }
         finally
         {

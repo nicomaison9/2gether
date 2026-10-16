@@ -169,5 +169,6 @@ public sealed record PhotoRequestResponse(Guid Id, string RequesterId, string Re
 public sealed record PhotoUploadResponse(Guid Id, string Url, PhotoVisibility Visibility, bool IsAvatar);
 public sealed record LocationUpdateRequest(double Latitude, double Longitude, double AccuracyMeters);
 public sealed record DirectMessageRequest(string RecipientId, string Text);
+public sealed record DeleteAccountRequest(string Password);
 public sealed record DirectMessageResponse(Guid Id, string SenderId, string RecipientId, string Text, DateTimeOffset SentAt);
 public sealed record ConversationSummaryResponse(string OtherUserId, string DisplayName, string City, string LastMessage, DateTimeOffset LastSentAt);

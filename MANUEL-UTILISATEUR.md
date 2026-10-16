@@ -65,11 +65,19 @@ Dans **Mon profil > Gérer mes passkeys**, la liste montre les clés enregistré
 - **Messages :** démarrer une conversation depuis un profil et retrouver les échanges dans l’onglet correspondant.
 - **Aperçu visiteur :** vérifier la présentation du profil.
 
-## 7. Vie privée et dépannage
+## 7. Supprimer son compte
+
+1. Depuis ton profil, choisir **Supprimer mon compte**.
+2. Lire les données concernées, saisir le mot de passe actuel et confirmer l’action.
+3. La suppression déconnecte l’appareil et efface du serveur le profil, les photos, les passkeys, les demandes d’accès aux photos ainsi que les messages envoyés et reçus.
+
+La suppression est définitive. Les sauvegardes du serveur peuvent conserver temporairement une copie jusqu’à leur expiration selon la politique de sauvegarde de l’exploitant. En cas de problème de connexion ou d’oubli du mot de passe, utilise d’abord la récupération du compte.
+
+## 8. Vie privée et dépannage
 
 - La localisation GPS est facultative. Les coordonnées exactes sont stockées par le serveur pour les comptes ; les autres membres ne voient qu’une approximation.
 - Les photos téléversées sont redimensionnées et leurs métadonnées sont supprimées par le serveur.
 - Les courriels locaux contiennent des liens ou des codes temporaires : ne pas publier les fichiers `.eml` et restreindre les permissions du dossier.
 - Si le serveur ou la boîte SMTP est indisponible, la demande est signalée comme non aboutie. Réessayer ultérieurement ; ne pas multiplier les demandes de code.
 - Pour se déconnecter, utiliser le bouton **Se déconnecter** dans le profil.
-- Pour toute question sur les données conservées, la suppression de compte ou les signalements, contacter l’administrateur : ces fonctions ne sont pas proposées dans cette version.
+- Pour toute question sur les sauvegardes et leur durée de conservation, contacter l’administrateur.

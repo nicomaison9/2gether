@@ -15,6 +15,7 @@
 - Every unsafe `/api` request requires an ASP.NET Core antiforgery request token in the `X-CSRF-TOKEN` header; the Blazor client obtains a fresh token before each mutation. The antiforgery cookie is HttpOnly, SameSite=Strict and Secure outside Development.
 - Production startup requires an absolute `DataProtection:KeysPath` and persists the application key ring there. Protect the mounted directory with restrictive permissions and the hosting provider's storage encryption.
 - Forwarded `X-Forwarded-For` and `X-Forwarded-Proto` headers are processed only from IPs explicitly configured under `ForwardedHeaders:KnownProxies`; one proxy hop is accepted.
+- Self-service account deletion requires the current password, removes the member’s profile, photos, passkeys, photo-access requests and messages in one database transaction, then clears the authentication cookie. Backups remain subject to the operator’s retention and deletion policy.
 - SQLite native dependency updated to a version beyond the CVE-2025-6965 affected range.
 
 ## Verification
@@ -35,7 +36,7 @@ The regression test starts a local server on an ephemeral port with a temporary 
 - Configure trusted reverse proxy forwarding before relying on IP quotas; never trust arbitrary client-provided forwarded headers. Behind an unconfigured proxy, authentication requests share the proxy IP quota.
 - Persist and protect Identity Data Protection keys; restrict database and backup file access. Data in SQLite, including exact coordinates and messages, is not application-encrypted or end-to-end encrypted.
 - Existing images stored before these changes are not automatically reencoded. Remove or securely reprocess them before public deployment.
-- Add abuse reporting, blocking, moderation, account deletion and appropriate privacy/consent settings for sensitive dating data. Confirmed mailboxes are not proof of real identity and do not prevent disposable addresses or automated accounts.
+- Add abuse reporting, blocking, moderation and appropriate privacy/consent settings for sensitive dating data. Confirmed mailboxes are not proof of real identity and do not prevent disposable addresses or automated accounts.
 - Keep the antiforgery token header on every new cookie-authenticated mutation; SameSite cookies remain defense in depth, not a replacement for the token.
 - Monitor disk usage and traffic, and test backups and restores. Per-process quotas alone do not prevent distributed abuse or unlimited account creation over time.
 - Review dependency advisories regularly and keep .NET and its dependencies on supported releases.

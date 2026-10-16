@@ -94,6 +94,10 @@
 			<button class="nav-item @(activePage == "messages" ? "selected" : "")" @onclick="ShowMessages"><span class="nav-symbol messages-symbol"></span><span>Messages</span><span class="nav-count">@state.Conversations.Count</span></button>
 			<button class="nav-item @(activePage == "profile" ? "selected" : "")" @onclick="ShowProfile"><span class="nav-symbol profile-symbol"></span><span>Mon profil</span></button>
 		</nav>
+		@if (isAuthenticated)
+		{
+			<a class="nav-item" href="/compte/supprimer">Supprimer mon compte</a>
+		}
 		<div class="sidebar-bottom">
 			<div class="privacy-note"><span class="privacy-mark">i</span><p><strong>À toi de choisir.</strong><br />Le GPS ne s'active qu'avec ton accord.</p></div>
 			<span class="demo-label">VERSION DE DÉMONSTRATION</span>
