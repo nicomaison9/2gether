@@ -26,11 +26,11 @@ Ouvrir ensuite <http://localhost:5067>. En développement, les courriels sont é
 
 | Emplacement | Rôle |
 | --- | --- |
-| `Pages/` | Parcours Blazor : inscription et application, confirmation d’e-mail, récupération du mot de passe et gestion des passkeys |
+| `Pages/` | Parcours Blazor : inscription, profils, signalements, blocages, modération, suppression de compte, récupération et passkeys |
 | `Server/Program.cs` | Configuration du serveur, d’Identity, de SQLite, du courrier, de WebAuthn et des limites de débit |
 | `Server/AuthenticationApi.cs` | Routes Identity et vérification serveur des cérémonies WebAuthn |
 | `Server/TwoGetherApi.cs` | API des profils, photos, localisations et messages |
-| `Server/BackendModels.cs` | Modèles Identity, profils et passkeys |
+| `Server/BackendModels.cs` | Modèles Identity, profils, passkeys, blocages et signalements |
 | `Server/Migrations/` | Historique versionné du schéma SQLite |
 | `Server/VerificationEmailSender.cs` | Envoi SMTP ou écriture locale des courriels |
 | `wwwroot/js/passkeys.js` | Adaptation WebAuthn du navigateur ; aucune donnée biométrique n’est lue par l’application |

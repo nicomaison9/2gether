@@ -781,6 +781,8 @@ h1 em { color: var(--coral); }
 .passkey-list li > span { display: grid; gap: 5px; }
 .passkey-list small { color: var(--muted); font-size: 11px; }
 .passkey-list .signout-button { flex: 0 0 auto; }
+.moderation-report { border: 1px solid var(--line); border-radius: 10px; margin: 16px 0; padding: 16px; }
+.moderation-report blockquote { border-left: 2px solid var(--accent); color: var(--muted); margin: 12px 0; padding-left: 12px; white-space: pre-wrap; }
 .passkey-action { text-decoration: none; }
 .recovery-form { display: grid; gap: 8px; }
 .recovery-divider { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }

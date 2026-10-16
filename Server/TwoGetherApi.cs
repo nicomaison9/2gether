@@ -18,18 +18,23 @@ public static class TwoGetherApi
 		app.MapGet("/api/registration-options", (EmailDeliveryOptions options) => Results.Ok(new { localEmailDelivery = options.Delivery == "PickupDirectory" }));
 		app.MapGet("/api/session", async (ClaimsPrincipal principal, AppDbContext db, UserManager<AppUser> users) =>
 		{
-			if (principal.Identity?.IsAuthenticated != true) return Results.Ok(new { isAuthenticated = false, email = "" });
+			if (principal.Identity?.IsAuthenticated != true) return Results.Ok(new { isAuthenticated = false, accountSuspended = false, email = "" });
 			var userId = GetUserId(principal);
 			var user = await users.FindByIdAsync(userId);
-			if (user is null || !user.EmailConfirmed) return Results.Ok(new { isAuthenticated = false, email = "" });
+			if (user is null || !user.EmailConfirmed) return Results.Ok(new { isAuthenticated = false, accountSuspended = false, email = "" });
+			if (user.IsSuspended) return Results.Ok(new { isAuthenticated = false, accountSuspended = true, email = "" });
 			var onboardingComplete = await db.UserProfiles.Where(profile => profile.UserId == userId).Select(profile => profile.OnboardingComplete).SingleOrDefaultAsync();
-			return Results.Ok(new { isAuthenticated = true, userId, email = user?.Email ?? "", onboardingComplete });
+			return Results.Ok(new { isAuthenticated = true, accountSuspended = false, userId, email = user.Email ?? "", onboardingComplete });
+		}).AllowAnonymous();
+		app.MapPost("/api/session/logout", async (SignInManager<AppUser> signInManager) =>
+		{
+			await signInManager.SignOutAsync();
+			return Results.NoContent();
 		}).AllowAnonymous();
 
 		var me = app.MapGroup("/api/me").RequireAuthorization();
 		me.MapGet("/profile", GetOwnProfileAsync);
 		me.MapPut("/profile", SaveOwnProfileAsync);
-		me.MapDelete("/account", DeleteOwnAccountAsync).RequireRateLimiting("account-deletion");
 		me.MapPost("/location", SaveLocationAsync);
 		me.MapDelete("/location", ClearLocationAsync);
 		me.MapGet("/photos", GetOwnPhotosAsync);
@@ -38,15 +43,29 @@ public static class TwoGetherApi
 		me.MapGet("/photo-requests", GetPhotoRequestsAsync);
 		me.MapPost("/photo-requests/{requestId:guid}/approve", ApprovePhotoRequestAsync);
 		me.MapPost("/photo-requests/{requestId:guid}/deny", DenyPhotoRequestAsync);
+		me.MapGet("/blocks", GetBlockedUsersAsync);
+		me.MapDelete("/blocks/{blockedUserId}", UnblockUserAsync);
 
 		app.MapGet("/api/profiles", GetNearbyProfilesAsync).RequireAuthorization();
 		app.MapGet("/api/profiles/{profileId}", GetPublicProfileAsync).RequireAuthorization();
 		app.MapGet("/api/profiles/{profileId}/photos", GetVisiblePhotosAsync).RequireAuthorization();
 		app.MapPost("/api/profiles/{profileId}/photo-requests", CreatePhotoRequestAsync).RequireAuthorization();
+		app.MapPost("/api/profiles/{profileId}/block", BlockUserAsync).RequireAuthorization().RequireRateLimiting("blocks");
+		app.MapPost("/api/profiles/{profileId}/reports", ReportUserAsync).RequireAuthorization().RequireRateLimiting("reports");
 		app.MapGet("/api/photos/{photoId:guid}", GetPhotoDataAsync).RequireAuthorization();
 		app.MapGet("/api/messages/{otherUserId}", GetConversationAsync).RequireAuthorization();
 		app.MapGet("/api/conversations", GetConversationsAsync).RequireAuthorization();
 		app.MapPost("/api/messages", SendMessageAsync).RequireAuthorization().RequireRateLimiting("messages");
+
+		app.MapDelete("/api/me/account", DeleteOwnAccountAsync)
+			.RequireAuthorization("account-management")
+			.RequireRateLimiting("account-deletion");
+
+		var moderation = app.MapGroup("/api/moderation").RequireAuthorization("moderator").RequireRateLimiting("moderation");
+		moderation.MapGet("/reports", GetModerationReportsAsync);
+		moderation.MapPost("/reports/{reportId:guid}/decision", DecideReportAsync);
+		moderation.MapGet("/suspended-users", GetSuspendedUsersAsync);
+		moderation.MapPost("/users/{userId}/reinstate", ReinstateUserAsync);
 	}
 
 	private static async Task<IResult> DeleteOwnAccountAsync(
@@ -78,6 +97,15 @@ public static class TwoGetherApi
 		await db.ProfilePhotos.Where(photo => photo.OwnerId == userId).ExecuteDeleteAsync(context.RequestAborted);
 		await db.PasskeyCredentials.Where(credential => credential.UserId == userId).ExecuteDeleteAsync(context.RequestAborted);
 		await db.UserProfiles.Where(profile => profile.UserId == userId).ExecuteDeleteAsync(context.RequestAborted);
+		await db.UserBlocks
+			.Where(block => block.BlockerId == userId || block.BlockedUserId == userId)
+			.ExecuteDeleteAsync(context.RequestAborted);
+		await db.AbuseReports
+			.Where(report => report.ReporterId == userId || report.ReportedUserId == userId)
+			.ExecuteDeleteAsync(context.RequestAborted);
+		await db.AbuseReports
+			.Where(report => report.ModeratorId == userId)
+			.ExecuteUpdateAsync(updates => updates.SetProperty(report => report.ModeratorId, (string?)null), context.RequestAborted);
 
 		var deleteResult = await users.DeleteAsync(user);
 		if (!deleteResult.Succeeded)
@@ -93,6 +121,215 @@ public static class TwoGetherApi
 
 		await transaction.CommitAsync(context.RequestAborted);
 		await signInManager.SignOutAsync();
+		return Results.NoContent();
+	}
+
+	private static async Task<IResult> GetBlockedUsersAsync(ClaimsPrincipal principal, AppDbContext db)
+	{
+		var userId = GetUserId(principal);
+		var blocks = await db.UserBlocks.AsNoTracking()
+			.Where(block => block.BlockerId == userId)
+			.ToListAsync();
+		var blockedIds = blocks.Select(block => block.BlockedUserId).ToArray();
+		var names = await db.UserProfiles.AsNoTracking()
+			.Where(profile => blockedIds.Contains(profile.UserId))
+			.ToDictionaryAsync(profile => profile.UserId, profile => profile.DisplayName);
+		return Results.Ok(blocks.OrderBy(block => block.CreatedAt).Select(block => new BlockedUserResponse(
+			block.BlockedUserId,
+			names.GetValueOrDefault(block.BlockedUserId, "Membre 2gether"),
+			block.CreatedAt)));
+	}
+
+	private static async Task<IResult> BlockUserAsync(
+		string profileId,
+		ClaimsPrincipal principal,
+		AppDbContext db,
+		HttpContext context)
+	{
+		var blockerId = GetUserId(principal);
+		if (profileId == blockerId) return Results.BadRequest(new { error = "Tu ne peux pas bloquer ton propre compte." });
+		if (!await db.Users.AnyAsync(user => user.Id == profileId && user.EmailConfirmed, context.RequestAborted))
+			return Results.NotFound();
+		if (await db.UserBlocks.AnyAsync(block => block.BlockerId == blockerId && block.BlockedUserId == profileId, context.RequestAborted))
+			return Results.NoContent();
+
+		await using var transaction = await db.Database.BeginTransactionAsync(context.RequestAborted);
+		var block = new UserBlock { BlockerId = blockerId, BlockedUserId = profileId };
+		db.UserBlocks.Add(block);
+		try
+		{
+			await db.SaveChangesAsync(context.RequestAborted);
+		}
+		catch (DbUpdateException)
+		{
+			await transaction.RollbackAsync(context.RequestAborted);
+			if (!await db.UserBlocks.AnyAsync(item => item.BlockerId == blockerId && item.BlockedUserId == profileId, context.RequestAborted))
+				throw;
+			await db.PhotoAccessRequests
+				.Where(request => (request.OwnerId == blockerId && request.RequesterId == profileId)
+					|| (request.OwnerId == profileId && request.RequesterId == blockerId))
+				.ExecuteDeleteAsync(context.RequestAborted);
+			return Results.NoContent();
+		}
+
+		await db.PhotoAccessRequests
+			.Where(request => (request.OwnerId == blockerId && request.RequesterId == profileId)
+				|| (request.OwnerId == profileId && request.RequesterId == blockerId))
+			.ExecuteDeleteAsync(context.RequestAborted);
+		await transaction.CommitAsync(context.RequestAborted);
+		return Results.NoContent();
+	}
+
+	private static async Task<IResult> UnblockUserAsync(
+		string blockedUserId,
+		ClaimsPrincipal principal,
+		AppDbContext db,
+		CancellationToken cancellationToken)
+	{
+		var userId = GetUserId(principal);
+		var block = await db.UserBlocks.SingleOrDefaultAsync(
+			item => item.BlockerId == userId && item.BlockedUserId == blockedUserId,
+			cancellationToken);
+		if (block is not null)
+		{
+			db.UserBlocks.Remove(block);
+			await db.SaveChangesAsync(cancellationToken);
+		}
+		return Results.NoContent();
+	}
+
+	private static async Task<IResult> ReportUserAsync(
+		string profileId,
+		ClaimsPrincipal principal,
+		AbuseReportRequest request,
+		AppDbContext db,
+		HttpContext context)
+	{
+		var reporterId = GetUserId(principal);
+		if (profileId == reporterId) return Results.BadRequest(new { error = "Tu ne peux pas signaler ton propre compte." });
+		var category = request.Category?.Trim().ToLowerInvariant();
+		if (category is not ("harassment" or "fake-profile" or "inappropriate-content" or "underage" or "other"))
+			return Results.BadRequest(new { error = "Choisis un motif de signalement valide." });
+		var details = request.Details?.Trim() ?? "";
+		if (details.Length > 1000) return Results.BadRequest(new { error = "Le détail est limité à 1 000 caractères." });
+		if (!await db.Users.AnyAsync(user => user.Id == profileId && user.EmailConfirmed, context.RequestAborted))
+			return Results.NotFound();
+
+		if (await db.AbuseReports.AnyAsync(report => report.ReporterId == reporterId
+			&& report.ReportedUserId == profileId
+			&& report.Status == AbuseReportStatus.Pending, context.RequestAborted))
+			return Results.Conflict(new { error = "Un signalement récent pour ce profil est déjà en cours d’examen." });
+
+		var report = new AbuseReport
+		{
+			ReporterId = reporterId,
+			ReportedUserId = profileId,
+			Category = category,
+			Details = details
+		};
+		db.AbuseReports.Add(report);
+		await db.SaveChangesAsync(context.RequestAborted);
+		return Results.Created($"/api/moderation/reports/{report.Id}", new { report.Id, report.CreatedAt });
+	}
+
+	private static async Task<IResult> GetModerationReportsAsync(
+		AppDbContext db,
+		string? status,
+		CancellationToken cancellationToken)
+	{
+		var reportStatus = status?.ToLowerInvariant() switch
+		{
+			null or "" or "pending" => AbuseReportStatus.Pending,
+			"dismissed" => AbuseReportStatus.Dismissed,
+			"action-taken" => AbuseReportStatus.ActionTaken,
+			_ => (AbuseReportStatus?)null
+		};
+		if (reportStatus is null) return Results.BadRequest(new { error = "Statut de modération invalide." });
+
+		var reports = await db.AbuseReports
+			.FromSqlInterpolated($"""
+				SELECT * FROM "AbuseReports"
+				WHERE "Status" = {(int)reportStatus.Value}
+				ORDER BY "CreatedAt" DESC
+				LIMIT 200
+				""")
+			.AsNoTracking()
+			.ToListAsync(cancellationToken);
+		var userIds = reports.SelectMany(report => new[] { report.ReporterId, report.ReportedUserId }).Distinct().ToArray();
+		var profiles = await db.UserProfiles.AsNoTracking()
+			.Where(profile => userIds.Contains(profile.UserId))
+			.ToDictionaryAsync(profile => profile.UserId, profile => profile.DisplayName, cancellationToken);
+		return Results.Ok(reports.Select(report => new ModerationReportResponse(
+			report.Id,
+			report.ReporterId,
+			profiles.GetValueOrDefault(report.ReporterId, "Compte supprimé"),
+			report.ReportedUserId,
+			profiles.GetValueOrDefault(report.ReportedUserId, "Compte supprimé"),
+			report.Category,
+			report.Details,
+			report.CreatedAt,
+			report.Status.ToString(),
+			report.ModeratorNote)));
+	}
+
+	private static async Task<IResult> DecideReportAsync(
+		Guid reportId,
+		ClaimsPrincipal principal,
+		ModerationDecisionRequest request,
+		AppDbContext db,
+		UserManager<AppUser> users,
+		CancellationToken cancellationToken)
+	{
+		var decision = request.Decision?.Trim().ToLowerInvariant();
+		if (decision is not ("dismiss" or "suspend"))
+			return Results.BadRequest(new { error = "Choisis une décision valide." });
+		var note = request.Note?.Trim() ?? "";
+		if (note.Length > 1000) return Results.BadRequest(new { error = "La note est limitée à 1 000 caractères." });
+
+		var report = await db.AbuseReports.SingleOrDefaultAsync(item => item.Id == reportId, cancellationToken);
+		if (report is null) return Results.NotFound();
+		if (report.Status != AbuseReportStatus.Pending)
+			return Results.Conflict(new { error = "Ce signalement a déjà été traité." });
+
+		if (decision == "suspend")
+		{
+			var target = await users.FindByIdAsync(report.ReportedUserId);
+			if (target is null) return Results.Conflict(new { error = "Le compte visé n’existe plus." });
+			target.IsSuspended = true;
+		}
+		report.Status = decision == "suspend" ? AbuseReportStatus.ActionTaken : AbuseReportStatus.Dismissed;
+		report.ModeratorId = GetUserId(principal);
+		report.ReviewedAt = DateTimeOffset.UtcNow;
+		report.ModeratorNote = note;
+		await db.SaveChangesAsync(cancellationToken);
+		return Results.NoContent();
+	}
+
+	private static async Task<IResult> GetSuspendedUsersAsync(AppDbContext db, CancellationToken cancellationToken)
+	{
+		var users = await db.Users.AsNoTracking()
+			.Where(user => user.IsSuspended)
+			.Select(user => new { user.Id, user.Email })
+			.ToListAsync(cancellationToken);
+		var userIds = users.Select(user => user.Id).ToArray();
+		var profiles = await db.UserProfiles.AsNoTracking()
+			.Where(profile => userIds.Contains(profile.UserId))
+			.ToDictionaryAsync(profile => profile.UserId, profile => profile.DisplayName, cancellationToken);
+		return Results.Ok(users.Select(user => new SuspendedUserResponse(
+			user.Id,
+			profiles.GetValueOrDefault(user.Id, "Membre 2gether"),
+			user.Email ?? "")));
+	}
+
+	private static async Task<IResult> ReinstateUserAsync(string userId, UserManager<AppUser> users)
+	{
+		var user = await users.FindByIdAsync(userId);
+		if (user is null) return Results.NotFound();
+		if (!user.IsSuspended) return Results.NoContent();
+		user.IsSuspended = false;
+		var updateResult = await users.UpdateAsync(user);
+		if (!updateResult.Succeeded)
+			return Results.Problem("Le compte n’a pas pu être rétabli.", statusCode: StatusCodes.Status500InternalServerError);
 		return Results.NoContent();
 	}
 
@@ -176,26 +413,46 @@ public static class TwoGetherApi
 		var ownProfile = await db.UserProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.UserId == userId);
 		if (ownProfile?.Latitude is not double latitude || ownProfile.Longitude is not double longitude) return Results.Ok(Array.Empty<PublicProfileResponse>());
 
-		var profiles = await db.UserProfiles.AsNoTracking().Include(item => item.User).Where(item => item.UserId != userId && item.User.EmailConfirmed && item.IsVisible && item.OnboardingComplete && item.Latitude != null && item.Longitude != null).ToListAsync();
-		var results = new List<PublicProfileResponse>();
-		foreach (var profile in profiles)
+		var profiles = await db.UserProfiles.AsNoTracking().Include(item => item.User)
+			.Where(item => item.UserId != userId && item.User.EmailConfirmed && !item.User.IsSuspended
+				&& item.IsVisible && item.OnboardingComplete && item.Latitude != null && item.Longitude != null
+				&& !db.UserBlocks.Any(block => (block.BlockerId == userId && block.BlockedUserId == item.UserId)
+					|| (block.BlockerId == item.UserId && block.BlockedUserId == userId)))
+			.ToListAsync();
+		var nearby = profiles
+			.Select(profile => (Profile: profile, Distance: PublicDistanceKm(latitude, longitude, profile.Latitude!.Value, profile.Longitude!.Value)))
+			.Where(item => item.Distance <= radius)
+			.ToList();
+		if (nearby.Count == 0) return Results.Ok(Array.Empty<PublicProfileResponse>());
+
+		var nearbyUserIds = nearby.Select(item => item.Profile.UserId).ToArray();
+		var photoMetadata = await db.ProfilePhotos.AsNoTracking()
+			.Where(photo => nearbyUserIds.Contains(photo.OwnerId))
+			.Select(photo => new { photo.OwnerId, photo.Id, photo.Visibility, photo.IsAvatar })
+			.ToListAsync();
+		var photosByOwner = photoMetadata.GroupBy(photo => photo.OwnerId).ToDictionary(group => group.Key, group => group.ToList());
+		var pendingOwners = (await db.PhotoAccessRequests.AsNoTracking()
+			.Where(request => nearbyUserIds.Contains(request.OwnerId) && request.RequesterId == userId && !request.IsGranted)
+			.Select(request => request.OwnerId)
+			.Distinct()
+			.ToListAsync()).ToHashSet();
+		return Results.Ok(nearby.Select(item =>
 		{
-			var distance = PublicDistanceKm(latitude, longitude, profile.Latitude!.Value, profile.Longitude!.Value);
-			if (distance > radius) continue;
-			var publicCount = await db.ProfilePhotos.CountAsync(photo => photo.OwnerId == profile.UserId && photo.Visibility == PhotoVisibility.Public);
-			var privateCount = await db.ProfilePhotos.CountAsync(photo => photo.OwnerId == profile.UserId && photo.Visibility == PhotoVisibility.Private);
-			var pendingRequest = await db.PhotoAccessRequests.AnyAsync(request => request.OwnerId == profile.UserId && request.RequesterId == userId && !request.IsGranted);
-			var avatarId = await db.ProfilePhotos.Where(photo => photo.OwnerId == profile.UserId && photo.IsAvatar).Select(photo => (Guid?)photo.Id).FirstOrDefaultAsync();
-			results.Add(ToPublicProfile(profile, distance, publicCount, privateCount, pendingRequest, avatarId));
-		}
-		return Results.Ok(results.OrderBy(profile => profile.DistanceKm));
+			var photos = photosByOwner.GetValueOrDefault(item.Profile.UserId) ?? [];
+			return ToPublicProfile(item.Profile, item.Distance,
+				photos.Count(photo => photo.Visibility == PhotoVisibility.Public),
+				photos.Count(photo => photo.Visibility == PhotoVisibility.Private),
+				pendingOwners.Contains(item.Profile.UserId),
+				photos.FirstOrDefault(photo => photo.IsAvatar)?.Id);
+		}).OrderBy(profile => profile.DistanceKm));
 	}
 
 	private static async Task<IResult> GetPublicProfileAsync(string profileId, ClaimsPrincipal principal, AppDbContext db)
 	{
 		var userId = GetUserId(principal);
-		var profile = await db.UserProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.UserId == profileId && item.User.EmailConfirmed && item.IsVisible && item.OnboardingComplete);
-		if (profile is null) return Results.NotFound();
+		var profile = await db.UserProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.UserId == profileId
+			&& item.User.EmailConfirmed && !item.User.IsSuspended && item.IsVisible && item.OnboardingComplete);
+		if (profile is null || profileId == userId || await IsBlockedAsync(db, userId, profileId)) return Results.NotFound();
 		var ownProfile = await db.UserProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.UserId == userId);
 		var distance = ownProfile?.Latitude is double latitude && ownProfile.Longitude is double longitude && profile.Latitude is double profileLatitude && profile.Longitude is double profileLongitude ? PublicDistanceKm(latitude, longitude, profileLatitude, profileLongitude) : 0;
 		var publicCount = await db.ProfilePhotos.CountAsync(photo => photo.OwnerId == profile.UserId && photo.Visibility == PhotoVisibility.Public);
@@ -282,8 +539,9 @@ public static class TwoGetherApi
 	private static async Task<IResult> GetVisiblePhotosAsync(string profileId, ClaimsPrincipal principal, AppDbContext db)
 	{
 		var viewerId = GetUserId(principal);
-		var ownerProfile = await db.UserProfiles.AsNoTracking().SingleOrDefaultAsync(profile => profile.UserId == profileId && profile.User.EmailConfirmed && profile.IsVisible && profile.OnboardingComplete);
-		if (ownerProfile is null) return Results.NotFound();
+		var ownerProfile = await db.UserProfiles.AsNoTracking().SingleOrDefaultAsync(profile => profile.UserId == profileId
+			&& profile.User.EmailConfirmed && !profile.User.IsSuspended && profile.IsVisible && profile.OnboardingComplete);
+		if (ownerProfile is null || await IsBlockedAsync(db, viewerId, profileId)) return Results.NotFound();
 		var canViewPrivate = profileId == viewerId || await HasPrivateAccessAsync(db, profileId, viewerId);
 		var photos = (await db.ProfilePhotos.AsNoTracking().Where(photo => photo.OwnerId == profileId && (photo.Visibility == PhotoVisibility.Public || canViewPrivate)).ToListAsync()).OrderByDescending(photo => photo.IsAvatar).ThenBy(photo => photo.CreatedAt);
 		return Results.Ok(photos.Select(ToPhotoMetadata));
@@ -292,8 +550,9 @@ public static class TwoGetherApi
 	private static async Task<IResult> GetPhotoDataAsync(Guid photoId, ClaimsPrincipal principal, AppDbContext db)
 	{
 		var viewerId = GetUserId(principal);
-		var photo = await db.ProfilePhotos.AsNoTracking().SingleOrDefaultAsync(item => item.Id == photoId && item.Owner.EmailConfirmed);
-		if (photo is null) return Results.NotFound();
+		var photo = await db.ProfilePhotos.AsNoTracking().SingleOrDefaultAsync(item => item.Id == photoId
+			&& item.Owner.EmailConfirmed && !item.Owner.IsSuspended);
+		if (photo is null || await IsBlockedAsync(db, viewerId, photo.OwnerId)) return Results.NotFound();
 		if (photo.Visibility == PhotoVisibility.Private && photo.OwnerId != viewerId && !await HasPrivateAccessAsync(db, photo.OwnerId, viewerId)) return Results.NotFound();
 		return Results.File(photo.Data, photo.ContentType, enableRangeProcessing: true);
 	}
@@ -302,7 +561,8 @@ public static class TwoGetherApi
 	{
 		var requesterId = GetUserId(principal);
 		if (profileId == requesterId) return Results.BadRequest(new { error = "Tu n'as pas besoin de demander l'accès à tes propres photos." });
-		if (!await db.ProfilePhotos.AnyAsync(photo => photo.OwnerId == profileId && photo.Owner.EmailConfirmed && photo.Visibility == PhotoVisibility.Private)) return Results.NotFound();
+		if (await IsBlockedAsync(db, requesterId, profileId)) return Results.NotFound();
+		if (!await db.ProfilePhotos.AnyAsync(photo => photo.OwnerId == profileId && photo.Owner.EmailConfirmed && !photo.Owner.IsSuspended && photo.Visibility == PhotoVisibility.Private)) return Results.NotFound();
 		if (await HasPrivateAccessAsync(db, profileId, requesterId)) return Results.Conflict(new { error = "Tu as déjà accès à cet album." });
 		var existing = await db.PhotoAccessRequests.FirstOrDefaultAsync(request => request.OwnerId == profileId && request.RequesterId == requesterId && !request.IsGranted);
 		if (existing is not null) return Results.Ok(new { existing.Id, existing.IsGranted, existing.CreatedAt });
@@ -351,30 +611,56 @@ public static class TwoGetherApi
 	{
 		var userId = GetUserId(principal);
 		if (otherUserId == userId) return Results.BadRequest();
-		var messages = (await db.DirectMessages.AsNoTracking()
-			.Where(message => (message.SenderId == userId && message.RecipientId == otherUserId) || (message.SenderId == otherUserId && message.RecipientId == userId))
-			.ToListAsync()).OrderBy(message => message.SentAt).TakeLast(500);
-		return Results.Ok(messages.Select(message => new DirectMessageResponse(message.Id, message.SenderId, message.RecipientId, message.Text, message.SentAt)));
+		if (await IsBlockedAsync(db, userId, otherUserId)
+			|| await db.Users.AnyAsync(user => user.Id == otherUserId && user.IsSuspended))
+			return Results.NotFound();
+		var messages = await db.DirectMessages.FromSqlInterpolated($"""
+			SELECT * FROM "DirectMessages"
+			WHERE ("SenderId" = {userId} AND "RecipientId" = {otherUserId})
+				OR ("SenderId" = {otherUserId} AND "RecipientId" = {userId})
+			ORDER BY "SentAt" DESC, "Id" DESC
+			LIMIT 500
+			""").AsNoTracking().ToListAsync();
+		return Results.Ok(messages.OrderBy(message => message.SentAt).ThenBy(message => message.Id)
+			.Select(message => new DirectMessageResponse(message.Id, message.SenderId, message.RecipientId, message.Text, message.SentAt)));
 	}
 
 	private static async Task<IResult> GetConversationsAsync(ClaimsPrincipal principal, AppDbContext db)
 	{
 		var userId = GetUserId(principal);
-		var messages = await db.DirectMessages.AsNoTracking()
-			.Where(message => message.SenderId == userId || message.RecipientId == userId)
-			.ToListAsync();
-		var latestMessages = messages
-			.GroupBy(message => message.SenderId == userId ? message.RecipientId : message.SenderId)
-			.Select(group => new { OtherUserId = group.Key, LastMessage = group.OrderByDescending(message => message.SentAt).First() })
-			.ToList();
-		var otherUserIds = latestMessages.Select(item => item.OtherUserId).ToList();
+		var latestMessages = await db.DirectMessages.FromSqlInterpolated($"""
+			SELECT "Id", "SenderId", "RecipientId", "Text", "SentAt"
+			FROM (
+				SELECT message."Id", message."SenderId", message."RecipientId", message."Text", message."SentAt",
+					ROW_NUMBER() OVER (
+						PARTITION BY CASE WHEN message."SenderId" = {userId} THEN message."RecipientId" ELSE message."SenderId" END
+						ORDER BY message."SentAt" DESC, message."Id" DESC
+					) AS "ConversationRank"
+				FROM "DirectMessages" AS message
+				WHERE (message."SenderId" = {userId} OR message."RecipientId" = {userId})
+					AND NOT EXISTS (
+						SELECT 1 FROM "UserBlocks" AS block
+						WHERE (block."BlockerId" = {userId}
+								AND block."BlockedUserId" = CASE WHEN message."SenderId" = {userId} THEN message."RecipientId" ELSE message."SenderId" END)
+							OR (block."BlockedUserId" = {userId}
+								AND block."BlockerId" = CASE WHEN message."SenderId" = {userId} THEN message."RecipientId" ELSE message."SenderId" END)
+					)
+					AND NOT EXISTS (
+						SELECT 1 FROM "AspNetUsers" AS suspendedUser
+						WHERE suspendedUser."Id" = CASE WHEN message."SenderId" = {userId} THEN message."RecipientId" ELSE message."SenderId" END
+							AND suspendedUser."IsSuspended" = 1
+					)
+			)
+			WHERE "ConversationRank" = 1
+			""").AsNoTracking().ToListAsync();
+		var otherUserIds = latestMessages.Select(item => item.SenderId == userId ? item.RecipientId : item.SenderId).ToList();
 		var otherProfiles = await db.UserProfiles.AsNoTracking().Where(profile => otherUserIds.Contains(profile.UserId)).ToDictionaryAsync(profile => profile.UserId);
-		var summaries = latestMessages.Select(item => new ConversationSummaryResponse(
-			item.OtherUserId,
-			otherProfiles.TryGetValue(item.OtherUserId, out var profile) ? profile.DisplayName : "Membre 2gether",
-			otherProfiles.TryGetValue(item.OtherUserId, out profile) ? profile.City : "",
-			item.LastMessage.Text,
-			item.LastMessage.SentAt)).OrderByDescending(item => item.LastSentAt).ToList();
+		var summaries = latestMessages.Select(message =>
+		{
+			var otherUserId = message.SenderId == userId ? message.RecipientId : message.SenderId;
+			otherProfiles.TryGetValue(otherUserId, out var profile);
+			return new ConversationSummaryResponse(otherUserId, profile?.DisplayName ?? "Membre 2gether", profile?.City ?? "", message.Text, message.SentAt);
+		}).OrderByDescending(item => item.LastSentAt).ToList();
 		return Results.Ok(summaries);
 	}
 
@@ -383,7 +669,10 @@ public static class TwoGetherApi
 		var senderId = GetUserId(principal);
 		var text = request.Text?.Trim();
 		if (request.RecipientId == senderId || string.IsNullOrWhiteSpace(text) || text.Length > 2000) return Results.BadRequest(new { error = "Message invalide." });
-		if (!await db.UserProfiles.AnyAsync(profile => profile.UserId == request.RecipientId && profile.User.EmailConfirmed && profile.IsVisible && profile.OnboardingComplete)) return Results.NotFound();
+		if (await IsBlockedAsync(db, senderId, request.RecipientId)) return Results.NotFound();
+		if (await db.Users.AnyAsync(user => user.Id == request.RecipientId && user.IsSuspended)) return Results.NotFound();
+		if (!await db.UserProfiles.AnyAsync(profile => profile.UserId == request.RecipientId && profile.User.EmailConfirmed
+			&& !profile.User.IsSuspended && profile.IsVisible && profile.OnboardingComplete)) return Results.NotFound();
 		var message = new DirectMessage { SenderId = senderId, RecipientId = request.RecipientId, Text = text };
 		db.DirectMessages.Add(message);
 		await db.SaveChangesAsync();
@@ -410,6 +699,10 @@ public static class TwoGetherApi
 	private static double PublicCoordinate(double coordinate) => Math.Round(Math.Round(coordinate / 0.005) * 0.005, 6);
 	private static double PublicDistanceKm(double lat1, double lon1, double lat2, double lon2) =>
 		Math.Round(DistanceKm(PublicCoordinate(lat1), PublicCoordinate(lon1), PublicCoordinate(lat2), PublicCoordinate(lon2)), 1);
+
+	private static Task<bool> IsBlockedAsync(AppDbContext db, string firstUserId, string secondUserId, CancellationToken cancellationToken = default) =>
+		db.UserBlocks.AnyAsync(block => (block.BlockerId == firstUserId && block.BlockedUserId == secondUserId)
+			|| (block.BlockerId == secondUserId && block.BlockedUserId == firstUserId), cancellationToken);
 
 	private static PhotoMetadataResponse ToPhotoMetadata(ProfilePhoto photo) => new(photo.Id, $"/api/photos/{photo.Id}", photo.Visibility, photo.IsAvatar, photo.CreatedAt);
 

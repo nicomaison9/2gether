@@ -1,0 +1,191 @@
+@page "/moderation"
+@using System.Net
+@using System.Net.Http.Json
+@inject HttpClient Http
+
+<PageTitle>Modération - 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card passkeys-card" aria-labelledby="moderation-title">
+		<a class="back-link" href="/">← Retour à 2gether</a>
+		<p class="eyebrow">ESPACE RÉSERVÉ</p>
+		<h1 id="moderation-title">Modération.</h1>
+		@if (isLoading)
+		{
+			<p role="status">Vérification des droits…</p>
+		}
+		else if (!isModerator)
+		{
+			<p class="onboarding-feedback" role="status">@feedback</p>
+		}
+		else
+		{
+			@if (!string.IsNullOrWhiteSpace(feedback))
+			{
+				<p class="onboarding-feedback" role="status">@feedback</p>
+			}
+			<h2>Signalements en attente (@reports.Count)</h2>
+			@if (reports.Count == 0)
+			{
+				<p class="onboarding-copy">Aucun signalement en attente.</p>
+			}
+			@foreach (var report in reports)
+			{
+				<article class="moderation-report" @key="report.Id">
+					<p><strong>@report.Category</strong> · reçu le @report.CreatedAt.ToLocalTime().ToString("g")</p>
+					<p>Signalé par <strong>@report.ReporterDisplayName</strong> · profil concerné : <strong>@report.ReportedDisplayName</strong></p>
+					@if (!string.IsNullOrWhiteSpace(report.Details))
+					{
+						<blockquote>@report.Details</blockquote>
+					}
+					<div class="onboarding-field">
+						<label for="@($"moderation-note-{report.Id}")">Note interne (facultative)</label>
+						<textarea id="@($"moderation-note-{report.Id}")" @bind="report.Note" maxlength="1000" rows="2"></textarea>
+					</div>
+					<div class="passkey-actions">
+						<button class="onboarding-next" type="button" @onclick='() => DecideAsync(report, "suspend")' disabled="@isBusy">Suspendre le compte</button>
+						<button class="signout-button" type="button" @onclick='() => DecideAsync(report, "dismiss")' disabled="@isBusy">Classer sans suite</button>
+					</div>
+				</article>
+			}
+
+			<h2>Comptes suspendus (@suspendedUsers.Count)</h2>
+			@if (suspendedUsers.Count == 0)
+			{
+				<p class="onboarding-copy">Aucun compte suspendu.</p>
+			}
+			else
+			{
+				<ul class="passkey-list">
+					@foreach (var user in suspendedUsers)
+					{
+						<li @key="user.UserId">
+							<span><strong>@user.DisplayName</strong><small>@user.Email</small></span>
+							<button class="signout-button" type="button" @onclick="() => ReinstateAsync(user)" disabled="@isBusy">Rétablir le compte</button>
+						</li>
+					}
+				</ul>
+			}
+		}
+	</section>
+</main>
+
+@code {
+	private bool isLoading = true;
+	private bool isModerator;
+	private bool isBusy;
+	private string feedback = "";
+	private List<ModerationReport> reports = [];
+	private List<SuspendedUser> suspendedUsers = [];
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			using var response = await Http.GetAsync("/api/moderation/reports");
+			if (response.StatusCode == HttpStatusCode.Unauthorized)
+				feedback = "Connecte-toi avec un compte modérateur configuré.";
+			else if (response.StatusCode == HttpStatusCode.Forbidden)
+				feedback = "Ce compte n’est pas autorisé à accéder à la modération.";
+			else if (!response.IsSuccessStatusCode)
+				feedback = "La file de modération n’a pas pu être chargée.";
+			else
+			{
+				isModerator = true;
+				reports = await response.Content.ReadFromJsonAsync<List<ModerationReport>>() ?? [];
+				await LoadSuspendedUsersAsync();
+			}
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isLoading = false;
+		}
+	}
+
+	private async Task LoadSuspendedUsersAsync()
+	{
+		using var response = await Http.GetAsync("/api/moderation/suspended-users");
+		if (response.IsSuccessStatusCode)
+			suspendedUsers = await response.Content.ReadFromJsonAsync<List<SuspendedUser>>() ?? [];
+		else
+			feedback = "La liste des comptes suspendus n’a pas pu être chargée.";
+	}
+
+	private async Task DecideAsync(ModerationReport report, string decision)
+	{
+		if (isBusy) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.PostAsJsonAsync(
+				$"/api/moderation/reports/{report.Id}/decision",
+				new { Decision = decision, Note = report.Note });
+			if (response.IsSuccessStatusCode)
+			{
+				reports.Remove(report);
+				await LoadSuspendedUsersAsync();
+				feedback = decision == "suspend" ? "Compte suspendu et signalement traité." : "Signalement classé sans suite.";
+			}
+			else
+				feedback = "La décision n’a pas pu être enregistrée. Actualise la page et réessaie.";
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private async Task ReinstateAsync(SuspendedUser user)
+	{
+		if (isBusy) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.PostAsync($"/api/moderation/users/{Uri.EscapeDataString(user.UserId)}/reinstate", null);
+			if (response.IsSuccessStatusCode)
+			{
+				suspendedUsers.Remove(user);
+				feedback = $"Le compte de {user.DisplayName} est rétabli.";
+			}
+			else
+				feedback = "Le compte n’a pas pu être rétabli. Réessaie.";
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private sealed class ModerationReport
+	{
+		public Guid Id { get; set; }
+		public string ReporterDisplayName { get; set; } = "";
+		public string ReportedDisplayName { get; set; } = "";
+		public string Category { get; set; } = "";
+		public string Details { get; set; } = "";
+		public DateTimeOffset CreatedAt { get; set; }
+		public string Note { get; set; } = "";
+	}
+
+	private sealed class SuspendedUser
+	{
+		public string UserId { get; set; } = "";
+		public string DisplayName { get; set; } = "";
+		public string Email { get; set; } = "";
+	}
+}

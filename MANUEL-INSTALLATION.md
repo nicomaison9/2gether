@@ -130,12 +130,15 @@ Configurer les variables d’environnement sur la plateforme d’hébergement, p
 | `TWOGETHER_DB_PATH` | Chemin absolu vers un fichier SQLite persistant et sauvegardé |
 | `DataProtection__KeysPath` | Chemin absolu vers un répertoire persistant et protégé; obligatoire en Production |
 | `ForwardedHeaders__KnownProxies__0` | Adresse IP du proxy inverse de confiance, si l’application est derrière un proxy; ajouter un index par proxy connu |
+| `Moderation__ModeratorEmails__0` | Adresse exacte d’un compte modérateur confirmé; ajouter `__1`, `__2`, etc. pour d’autres modérateurs |
 
 Le nom de domaine WebAuthn (`RPID`) et les origines autorisées proviennent de `Email__PublicOrigin`. Configurer cette valeur sur la même origine que celle affichée au navigateur ; ne pas accepter une origine issue d’un en-tête fourni librement par le client. Avec un proxy inverse, n’exposer que le proxy en HTTPS et limiter/valider les en-têtes transférés conformément à la configuration de l’hébergeur.
 
 Les adresses transmises (`X-Forwarded-For` et `X-Forwarded-Proto`) ne sont prises en compte que si elles proviennent d’une adresse configurée dans `ForwardedHeaders__KnownProxies__*`. Un proxy non déclaré n’est pas approuvé et ses en-têtes ne modifient ni l’adresse client ni le schéma détectés.
 
 Toutes les mutations de l’API utilisent un jeton antiforgery transmis dans l’en-tête `X-CSRF-TOKEN`. Le client Blazor récupère ce jeton avant chaque requête qui modifie des données. Ne pas désactiver ce contrôle sur les nouveaux endpoints.
+
+L’accès à l’espace de modération (`/moderation`) est réservé aux comptes confirmés dont l’adresse correspond à une valeur `Moderation__ModeratorEmails__*`. Configurer ces adresses dans l’environnement protégé de l’hébergeur; ne jamais exposer cette liste dans le dépôt ou la laisser contrôlable par les utilisateurs. Sans adresse configurée, aucun compte ne peut examiner ou traiter les signalements. Définir également une procédure de traitement et de conservation des signalements.
 
 ### Persistance et mises à jour
 
@@ -156,13 +159,14 @@ Toutes les mutations de l’API utilisent un jeton antiforgery transmis dans l�
 - Configurer SPF, DKIM et DMARC pour le domaine d’expédition. Tester la délivrabilité, les liens HTTPS et le fonctionnement de la récupération avant la mise en service.
 - Prévoir surveillance, quotas disque, rotation/sauvegarde de la base et procédure de restauration.
 
-## 7. Passkeys, dimensionnement et limites
+## 7. Passkeys, modération et limites
 
 - L’appareil vérifie localement l’empreinte, le visage ou le code ; le serveur reçoit une preuve WebAuthn et stocke la clé publique, jamais les données biométriques.
 - L’API demande un authentificateur résident et `userVerification=required`. Le code de l’appareil peut donc être utilisé en remplacement d’un capteur biométrique.
+- Les membres peuvent bloquer et signaler des profils. Un blocage masque les profils et conversations dans les deux sens et empêche les nouveaux messages et demandes d’accès aux photos. Les modérateurs configurés peuvent classer un signalement, suspendre le compte concerné ou le rétablir.
 - Les options de défi expirent après cinq minutes et chaque défi est consommé une seule fois. Elles sont conservées en mémoire dans `PasskeyChallengeStore` : les cérémonies doivent rester sur la même instance serveur. Pour plusieurs instances ou une répartition de charge, remplacer ce composant par un stockage partagé et atomique (par exemple Redis ou SQLite avec consommation transactionnelle) ; l’affinité de session seule n’est pas une stratégie durable de haute disponibilité.
 - La récupération par e-mail s’appuie sur les jetons Identity à durée de vie limitée. Le code de récupération est à usage unique et sa durée est d’une heure. La limitation par adresse IP ne suffit pas, à elle seule, contre une attaque distribuée.
-- Cette version n’inclut pas de signalement, de blocage, de modération, de suppression de compte, ni de chiffrement de bout en bout des messages. Vérifier les exigences réglementaires et de protection des données avant une ouverture publique.
+- Les messages et signalements ne sont pas chiffrés de bout en bout. Vérifier les exigences réglementaires, définir une durée de conservation des données de modération et tester les procédures de sauvegarde/suppression avant l’ouverture publique.
 
 ## 8. Diagnostic
 

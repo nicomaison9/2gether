@@ -6,6 +6,8 @@ using System.Text.Json;
 using ImageMagick;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using MimeKit;
 using System.Text.RegularExpressions;
 using Xunit;
@@ -66,7 +68,8 @@ public sealed class SecurityTests
                 .UseSqlite($"Data Source={databasePath}")
                 .Options;
             await using var database = new AppDbContext(options);
-            await database.Database.EnsureCreatedAsync();
+            var initialMigration = database.Database.GetMigrations().First();
+            await database.GetService<IMigrator>().MigrateAsync(initialMigration);
             await database.Database.ExecuteSqlRawAsync("""
                 INSERT INTO "AspNetUsers"
                     ("Id", "EmailConfirmed", "PhoneNumberConfirmed", "TwoFactorEnabled", "LockoutEnabled", "AccessFailedCount")
@@ -415,6 +418,139 @@ public sealed class SecurityTests
         }
     }
 
+    [Fact]
+    public async Task Blocks_hide_members_and_moderators_can_review_and_suspend_reports()
+    {
+        var serverDirectory = FindServerDirectory();
+        var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-moderation-{Guid.NewGuid():N}.db");
+        var mailDirectory = databasePath + ".mail";
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        var address = new Uri($"http://127.0.0.1:{port}");
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = serverDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net10.0", "TwoGether.Server.dll"));
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        start.Environment["ASPNETCORE_URLS"] = address.ToString();
+        start.Environment["TWOGETHER_DB_PATH"] = databasePath;
+        start.Environment["Email__Delivery"] = "PickupDirectory";
+        start.Environment["Email__PublicOrigin"] = address.ToString();
+        start.Environment["Email__FromAddress"] = "verification@2gether.invalid";
+        start.Environment["Email__PickupDirectory"] = mailDirectory;
+        start.Environment["Moderation__ModeratorEmails__0"] = "moderator@security.invalid";
+        using var server = Process.Start(start)!;
+        server.BeginOutputReadLine();
+        server.BeginErrorReadLine();
+        try
+        {
+            using var anonymous = CreateClient(address);
+            using var reporter = CreateClient(address);
+            using var target = CreateClient(address);
+            using var moderator = CreateClient(address);
+            await WaitForServerAsync(anonymous, server);
+            var reporterId = await CreateModerationAccountAsync(reporter, "reporter@security.invalid", mailDirectory, "Reporter");
+            var targetId = await CreateModerationAccountAsync(target, "target@security.invalid", mailDirectory, "Target");
+            await CreateModerationAccountAsync(moderator, "moderator@security.invalid", mailDirectory, "Moderator");
+
+            Assert.Equal(HttpStatusCode.Forbidden, (await reporter.GetAsync("/api/moderation/reports")).StatusCode);
+            using var report = await reporter.PostAsJsonAsync($"/api/profiles/{targetId}/reports", new
+            {
+                Category = "harassment",
+                Details = "Contact répété malgré mon refus."
+            });
+            Assert.True(report.StatusCode == HttpStatusCode.Created,
+                $"Report submission failed with {(int)report.StatusCode}: {await report.Content.ReadAsStringAsync()}");
+            using var duplicateReport = await reporter.PostAsJsonAsync($"/api/profiles/{targetId}/reports", new
+            {
+                Category = "harassment",
+                Details = "Même situation."
+            });
+            Assert.Equal(HttpStatusCode.Conflict, duplicateReport.StatusCode);
+            var reportId = (await report.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+            using var queueResponse = await moderator.GetAsync("/api/moderation/reports");
+            Assert.True(queueResponse.IsSuccessStatusCode,
+                $"Moderation queue failed with {(int)queueResponse.StatusCode}: {await queueResponse.Content.ReadAsStringAsync()}");
+            var queue = await queueResponse.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(1, queue.GetArrayLength());
+            Assert.Equal(reporterId, queue[0].GetProperty("reporterId").GetString());
+            Assert.Equal(targetId, queue[0].GetProperty("reportedUserId").GetString());
+
+            Assert.Equal(HttpStatusCode.Created, (await reporter.PostAsJsonAsync("/api/messages", new
+            {
+                RecipientId = targetId,
+                Text = "Message avant le blocage."
+            })).StatusCode);
+			var history = await reporter.GetFromJsonAsync<JsonElement>($"/api/messages/{targetId}");
+			Assert.Equal("Message avant le blocage.", history[0].GetProperty("text").GetString());
+			var conversations = await reporter.GetFromJsonAsync<JsonElement>("/api/conversations");
+			Assert.Equal("Message avant le blocage.", conversations[0].GetProperty("lastMessage").GetString());
+            Assert.Equal(HttpStatusCode.NoContent, (await reporter.PostAsync($"/api/profiles/{targetId}/block", null)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync($"/api/profiles/{targetId}")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await reporter.GetAsync($"/api/messages/{targetId}")).StatusCode);
+            Assert.Empty((await reporter.GetFromJsonAsync<JsonElement>("/api/conversations")).EnumerateArray());
+            Assert.Equal(HttpStatusCode.NotFound, (await reporter.PostAsJsonAsync("/api/messages", new
+            {
+                RecipientId = targetId,
+                Text = "Message bloqué."
+            })).StatusCode);
+            using var blocksResponse = await reporter.GetAsync("/api/me/blocks");
+            Assert.True(blocksResponse.IsSuccessStatusCode,
+                $"Block list failed with {(int)blocksResponse.StatusCode}: {await blocksResponse.Content.ReadAsStringAsync()}");
+            Assert.Equal(1, (await blocksResponse.Content.ReadFromJsonAsync<JsonElement>()).GetArrayLength());
+            Assert.Equal(HttpStatusCode.NoContent, (await reporter.DeleteAsync($"/api/me/blocks/{targetId}")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await reporter.GetAsync($"/api/profiles/{targetId}")).StatusCode);
+
+            using var decision = await moderator.PostAsJsonAsync($"/api/moderation/reports/{reportId}/decision", new
+            {
+                Decision = "suspend",
+                Note = "Suspension après examen du signalement."
+            });
+            Assert.Equal(HttpStatusCode.NoContent, decision.StatusCode);
+            var suspendedSession = await target.GetFromJsonAsync<JsonElement>("/api/session");
+            Assert.False(suspendedSession.GetProperty("isAuthenticated").GetBoolean());
+            Assert.True(suspendedSession.GetProperty("accountSuspended").GetBoolean());
+            Assert.Equal(HttpStatusCode.Forbidden, (await target.GetAsync("/api/me/profile")).StatusCode);
+            Assert.Equal(1, (await moderator.GetFromJsonAsync<JsonElement>("/api/moderation/suspended-users")).GetArrayLength());
+            using (var deletionWhileSuspended = await target.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/me/account")
+            {
+                Content = JsonContent.Create(new { Password = "Incorrect-password-123" })
+            }))
+                Assert.Equal(HttpStatusCode.Unauthorized, deletionWhileSuspended.StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await target.PostAsync("/api/session/logout", null)).StatusCode);
+            Assert.False((await target.GetFromJsonAsync<JsonElement>("/api/session")).GetProperty("accountSuspended").GetBoolean());
+            Assert.Equal(HttpStatusCode.OK, (await target.PostAsJsonAsync("/api/auth/login?useCookies=true", new
+            {
+                Email = "target@security.invalid",
+                Password = "Security-check-12345"
+            })).StatusCode);
+            Assert.True((await target.GetFromJsonAsync<JsonElement>("/api/session")).GetProperty("accountSuspended").GetBoolean());
+            Assert.Equal(HttpStatusCode.NoContent, (await target.PostAsync("/api/session/logout", null)).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await moderator.PostAsync($"/api/moderation/users/{targetId}/reinstate", null)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await target.PostAsJsonAsync("/api/auth/login?useCookies=true", new
+            {
+                Email = "target@security.invalid",
+                Password = "Security-check-12345"
+            })).StatusCode);
+            Assert.True((await target.GetFromJsonAsync<JsonElement>("/api/session")).GetProperty("isAuthenticated").GetBoolean());
+            Assert.Equal(HttpStatusCode.OK, (await target.GetAsync("/api/me/profile")).StatusCode);
+        }
+        finally
+        {
+            if (!server.HasExited) server.Kill(true);
+            await server.WaitForExitAsync();
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(databasePath + suffix);
+            if (Directory.Exists(mailDirectory)) Directory.Delete(mailDirectory, true);
+        }
+    }
+
     private static HttpClient CreateClient(Uri address)
     {
         var handler = new TestAntiforgeryHandler
@@ -476,6 +612,32 @@ public sealed class SecurityTests
         var profile = new
         {
             DisplayName = "Security test", Age = 25, Gender = "", SexualOrientation = "", Biography = "", City = "Paris",
+            Occupation = "", Education = "", Languages = "", Lifestyle = "", LookingFor = "", Intent = "",
+            Interests = Array.Empty<string>(), AffinityReasonIds = Array.Empty<string>(), OnboardingComplete = true
+        };
+        Assert.Equal(HttpStatusCode.OK, (await client.PutAsJsonAsync("/api/me/profile", profile)).StatusCode);
+        return (await client.GetFromJsonAsync<JsonElement>("/api/session")).GetProperty("userId").GetString()!;
+    }
+
+    private static async Task<string> CreateModerationAccountAsync(
+        HttpClient client,
+        string email,
+        string mailDirectory,
+        string displayName)
+    {
+        var credentials = new { Email = email, Password = "Security-check-12345" };
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/auth/register", credentials)).StatusCode);
+        using var mail = Directory.GetFiles(mailDirectory, "*.eml")
+            .Select(path => MimeMessage.Load(path))
+            .Single(message => message.To.Mailboxes.Any(mailbox => mailbox.Address == email));
+        var confirmationLink = new Uri(Regex.Match(
+            mail.TextBody ?? throw new InvalidDataException("Missing confirmation email body."),
+            @"https?://\S+").Value);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/auth/confirmEmail" + confirmationLink.Query)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/auth/login?useCookies=true", credentials)).StatusCode);
+        var profile = new
+        {
+            DisplayName = displayName, Age = 25, Gender = "", SexualOrientation = "", Biography = "", City = "Paris",
             Occupation = "", Education = "", Languages = "", Lifestyle = "", LookingFor = "", Intent = "",
             Interests = Array.Empty<string>(), AffinityReasonIds = Array.Empty<string>(), OnboardingComplete = true
         };

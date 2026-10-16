@@ -5,7 +5,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace TwoGether.Server;
 
-public sealed class AppUser : IdentityUser;
+public sealed class AppUser : IdentityUser
+{
+	public bool IsSuspended { get; set; }
+}
 
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbContext<AppUser>(options)
 {
@@ -14,6 +17,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 	public DbSet<PhotoAccessRequest> PhotoAccessRequests => Set<PhotoAccessRequest>();
 	public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
 	public DbSet<PasskeyCredential> PasskeyCredentials => Set<PasskeyCredential>();
+	public DbSet<UserBlock> UserBlocks => Set<UserBlock>();
+	public DbSet<AbuseReport> AbuseReports => Set<AbuseReport>();
 
 	protected override void OnModelCreating(ModelBuilder builder)
 	{
@@ -26,6 +31,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 		builder.Entity<PasskeyCredential>().HasKey(credential => credential.CredentialId);
 		builder.Entity<PasskeyCredential>().HasIndex(credential => credential.UserId);
 		builder.Entity<PasskeyCredential>().HasOne(credential => credential.User).WithMany().HasForeignKey(credential => credential.UserId).OnDelete(DeleteBehavior.Cascade);
+		builder.Entity<UserBlock>().HasKey(block => new { block.BlockerId, block.BlockedUserId });
+		builder.Entity<UserBlock>().HasIndex(block => new { block.BlockedUserId, block.BlockerId });
+		builder.Entity<UserBlock>().HasOne<AppUser>().WithMany().HasForeignKey(block => block.BlockerId).OnDelete(DeleteBehavior.Cascade);
+		builder.Entity<UserBlock>().HasOne<AppUser>().WithMany().HasForeignKey(block => block.BlockedUserId).OnDelete(DeleteBehavior.Cascade);
+		builder.Entity<AbuseReport>().HasIndex(report => new { report.Status, report.CreatedAt });
+		builder.Entity<AbuseReport>().HasIndex(report => new { report.ReporterId, report.ReportedUserId, report.CreatedAt });
 	}
 }
 
@@ -102,6 +113,29 @@ public sealed class PasskeyCredential
 	public DateTimeOffset? LastUsedAt { get; set; }
 }
 
+public sealed class UserBlock
+{
+	[MaxLength(450)] public string BlockerId { get; set; } = "";
+	[MaxLength(450)] public string BlockedUserId { get; set; } = "";
+	public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public enum AbuseReportStatus { Pending, Dismissed, ActionTaken }
+
+public sealed class AbuseReport
+{
+	public Guid Id { get; set; } = Guid.NewGuid();
+	[MaxLength(450)] public string ReporterId { get; set; } = "";
+	[MaxLength(450)] public string ReportedUserId { get; set; } = "";
+	[Required, MaxLength(40)] public string Category { get; set; } = "";
+	[MaxLength(1000)] public string Details { get; set; } = "";
+	public AbuseReportStatus Status { get; set; }
+	public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+	[MaxLength(450)] public string? ModeratorId { get; set; }
+	public DateTimeOffset? ReviewedAt { get; set; }
+	[MaxLength(1000)] public string ModeratorNote { get; set; } = "";
+}
+
 public sealed record ProfileUpsertRequest(
 	string DisplayName,
 	int Age,
@@ -170,5 +204,20 @@ public sealed record PhotoUploadResponse(Guid Id, string Url, PhotoVisibility Vi
 public sealed record LocationUpdateRequest(double Latitude, double Longitude, double AccuracyMeters);
 public sealed record DirectMessageRequest(string RecipientId, string Text);
 public sealed record DeleteAccountRequest(string Password);
+public sealed record AbuseReportRequest(string Category, string? Details);
+public sealed record ModerationDecisionRequest(string Decision, string? Note);
+public sealed record BlockedUserResponse(string UserId, string DisplayName, DateTimeOffset CreatedAt);
+public sealed record ModerationReportResponse(
+	Guid Id,
+	string ReporterId,
+	string ReporterDisplayName,
+	string ReportedUserId,
+	string ReportedDisplayName,
+	string Category,
+	string Details,
+	DateTimeOffset CreatedAt,
+	string Status,
+	string ModeratorNote);
+public sealed record SuspendedUserResponse(string UserId, string DisplayName, string Email);
 public sealed record DirectMessageResponse(Guid Id, string SenderId, string RecipientId, string Text, DateTimeOffset SentAt);
 public sealed record ConversationSummaryResponse(string OtherUserId, string DisplayName, string City, string LastMessage, DateTimeOffset LastSentAt);

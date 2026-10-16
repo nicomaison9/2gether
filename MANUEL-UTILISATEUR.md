@@ -63,6 +63,7 @@ Dans **Mon profil > Gérer mes passkeys**, la liste montre les clés enregistré
 - **Carte :** afficher la répartition approximative des profils. Une connexion Internet est nécessaire pour les tuiles de carte.
 - **Photos :** gérer l’avatar et les bibliothèques publiques et privées selon les limites indiquées dans l’application. Les demandes d’accès aux photos privées sont soumises à l’accord du propriétaire.
 - **Messages :** démarrer une conversation depuis un profil et retrouver les échanges dans l’onglet correspondant.
+- **Sécurité :** depuis le profil détaillé d’un membre, le signaler ou le bloquer. Un blocage masque les profils et conversations dans les deux sens et empêche les nouveaux messages. Gérer ou annuler un blocage depuis **Membres bloqués**.
 - **Aperçu visiteur :** vérifier la présentation du profil.
 
 ## 7. Supprimer son compte
@@ -71,7 +72,7 @@ Dans **Mon profil > Gérer mes passkeys**, la liste montre les clés enregistré
 2. Lire les données concernées, saisir le mot de passe actuel et confirmer l’action.
 3. La suppression déconnecte l’appareil et efface du serveur le profil, les photos, les passkeys, les demandes d’accès aux photos ainsi que les messages envoyés et reçus.
 
-La suppression est définitive. Les sauvegardes du serveur peuvent conserver temporairement une copie jusqu’à leur expiration selon la politique de sauvegarde de l’exploitant. En cas de problème de connexion ou d’oubli du mot de passe, utilise d’abord la récupération du compte.
+La suppression est définitive. Les signalements auxquels tu as participé et tes blocages sont également effacés. Les sauvegardes du serveur peuvent conserver temporairement une copie jusqu’à leur expiration selon la politique de sauvegarde de l’exploitant. En cas de problème de connexion ou d’oubli du mot de passe, utilise d’abord la récupération du compte.
 
 ## 8. Vie privée et dépannage
 

@@ -103,6 +103,10 @@ builder.Services.ConfigureApplicationCookie(options =>
 	options.Events.OnRedirectToLogin = context => { context.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
 	options.Events.OnRedirectToAccessDenied = context => { context.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
 });
+var moderatorEmails = (builder.Configuration.GetSection("Moderation:ModeratorEmails").Get<string[]>() ?? [])
+	.Where(email => !string.IsNullOrWhiteSpace(email))
+	.Select(email => email.Trim())
+	.ToHashSet(StringComparer.OrdinalIgnoreCase);
 builder.Services.AddAuthorization(options =>
 {
 	options.DefaultPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().RequireAssertion(async context =>
@@ -110,8 +114,25 @@ builder.Services.AddAuthorization(options =>
 		if (context.Resource is not HttpContext httpContext) return false;
 		var users = httpContext.RequestServices.GetRequiredService<UserManager<AppUser>>();
 		var user = await users.GetUserAsync(context.User);
-		return user is not null && await users.IsEmailConfirmedAsync(user);
+		return user is not null && user.EmailConfirmed && !user.IsSuspended;
 	}).Build();
+	options.AddPolicy("account-management", policy => policy
+		.RequireAuthenticatedUser()
+		.RequireAssertion(async context =>
+		{
+			if (context.Resource is not HttpContext httpContext) return false;
+			var user = await httpContext.RequestServices.GetRequiredService<UserManager<AppUser>>().GetUserAsync(context.User);
+			return user is not null && user.EmailConfirmed;
+		}));
+	options.AddPolicy("moderator", policy => policy
+		.RequireAuthenticatedUser()
+		.RequireAssertion(async context =>
+		{
+			if (context.Resource is not HttpContext httpContext) return false;
+			var user = await httpContext.RequestServices.GetRequiredService<UserManager<AppUser>>().GetUserAsync(context.User);
+			return user is not null && user.EmailConfirmed && !user.IsSuspended
+				&& moderatorEmails.Contains(user.Email ?? "");
+		}));
 });
 builder.Services.AddRateLimiter(options =>
 {
@@ -125,6 +146,15 @@ builder.Services.AddRateLimiter(options =>
 	options.AddPolicy("account-deletion", context => RateLimitPartition.GetFixedWindowLimiter(
 		"context:" + (context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
 		_ => new FixedWindowRateLimiterOptions { PermitLimit = 3, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+	options.AddPolicy("blocks", context => RateLimitPartition.GetFixedWindowLimiter(
+		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+		_ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+	options.AddPolicy("reports", context => RateLimitPartition.GetFixedWindowLimiter(
+		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+		_ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+	options.AddPolicy("moderation", context => RateLimitPartition.GetFixedWindowLimiter(
+		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+		_ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 	options.AddPolicy("messages", context => RateLimitPartition.GetFixedWindowLimiter(
 		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
 		{

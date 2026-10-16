@@ -1,0 +1,122 @@
+@page "/signaler/{ProfileId}"
+@using System.Net
+@using System.Net.Http.Json
+@using System.Text.Json
+@inject HttpClient Http
+
+<PageTitle>Signaler un profil - 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card recovery-card" aria-labelledby="report-title">
+		<a class="back-link" href="/">← Retour à 2gether</a>
+		<p class="eyebrow">SÉCURITÉ DE LA COMMUNAUTÉ</p>
+		<h1 id="report-title">Signaler un profil.</h1>
+		@if (isLoading)
+		{
+			<p role="status">Vérification de la session…</p>
+		}
+		else if (!isAuthenticated)
+		{
+			<p class="onboarding-feedback" role="status">Connecte-toi pour envoyer un signalement. Si tu es en danger immédiat, contacte les services d’urgence.</p>
+			<a class="onboarding-next passkey-action" href="/?login=true">Aller à la connexion</a>
+		}
+		else if (isSubmitted)
+		{
+			<p class="onboarding-feedback" role="status">Ton signalement a été transmis à l’équipe de modération. Merci de nous aider à protéger la communauté.</p>
+			<a class="onboarding-next passkey-action" href="/">Retour aux profils</a>
+		}
+		else
+		{
+			<p class="onboarding-copy">Choisis le motif le plus proche et décris brièvement les faits. N’inclus pas de données personnelles qui ne sont pas nécessaires.</p>
+			<form class="recovery-form" @onsubmit="SubmitReportAsync" @onsubmit:preventDefault>
+				<div class="onboarding-field">
+					<label for="report-category">Motif du signalement</label>
+					<select id="report-category" @bind="category" required>
+						<option value="">Choisir un motif</option>
+						<option value="harassment">Harcèlement ou contact non souhaité</option>
+						<option value="fake-profile">Faux profil ou usurpation d’identité</option>
+						<option value="inappropriate-content">Contenu inapproprié</option>
+						<option value="underage">Personne potentiellement mineure</option>
+						<option value="other">Autre problème de sécurité</option>
+					</select>
+				</div>
+				<div class="onboarding-field">
+					<label for="report-details">Détails utiles (facultatif)</label>
+					<textarea id="report-details" @bind="details" maxlength="1000" rows="5"></textarea>
+					<small>1 000 caractères maximum. Le signalement est visible uniquement par les modérateurs.</small>
+				</div>
+				<button class="onboarding-next" type="submit" disabled="@(isBusy || string.IsNullOrWhiteSpace(category))">
+					@(isBusy ? "Envoi…" : "Envoyer le signalement")
+				</button>
+			</form>
+		}
+		@if (!string.IsNullOrWhiteSpace(feedback))
+		{
+			<p class="onboarding-feedback" role="status">@feedback</p>
+		}
+	</section>
+</main>
+
+@code {
+	[Parameter] public string ProfileId { get; set; } = "";
+
+	private bool isLoading = true;
+	private bool isAuthenticated;
+	private bool isBusy;
+	private bool isSubmitted;
+	private string category = "";
+	private string details = "";
+	private string feedback = "";
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			var session = await Http.GetFromJsonAsync<JsonElement>("/api/session");
+			isAuthenticated = session.TryGetProperty("isAuthenticated", out var authenticated) && authenticated.GetBoolean();
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isLoading = false;
+		}
+	}
+
+	private async Task SubmitReportAsync()
+	{
+		if (isBusy || !isAuthenticated || string.IsNullOrWhiteSpace(category)) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.PostAsJsonAsync(
+				$"/api/profiles/{Uri.EscapeDataString(ProfileId)}/reports",
+				new { Category = category, Details = details });
+			if (response.StatusCode == HttpStatusCode.Created)
+			{
+				isSubmitted = true;
+				details = "";
+			}
+			else if (response.StatusCode == HttpStatusCode.Conflict)
+				feedback = "Un signalement pour ce profil est déjà en cours d’examen.";
+			else if (response.StatusCode == HttpStatusCode.NotFound)
+				feedback = "Ce profil n’est plus disponible.";
+			else if (response.StatusCode == HttpStatusCode.TooManyRequests)
+				feedback = "Trop de signalements. Patiente une minute avant de réessayer.";
+			else
+				feedback = "Le signalement n’a pas pu être envoyé. Vérifie les informations et réessaie.";
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+}

@@ -1,0 +1,116 @@
+@page "/comptes-bloques"
+@using System.Net
+@using System.Net.Http.Json
+@inject HttpClient Http
+
+<PageTitle>Membres bloqués - 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card passkeys-card" aria-labelledby="blocks-title">
+		<a class="back-link" href="/">← Retour à 2gether</a>
+		<p class="eyebrow">SÉCURITÉ DE TON COMPTE</p>
+		<h1 id="blocks-title">Membres bloqués.</h1>
+		<p class="onboarding-copy">Un blocage masque vos profils respectifs, les photos et les conversations, et empêche l’envoi de nouveaux messages ou demandes d’accès aux photos.</p>
+		@if (isLoading)
+		{
+			<p role="status">Chargement de la liste…</p>
+		}
+		else if (!isAuthenticated)
+		{
+			<p class="onboarding-feedback" role="status">Connecte-toi pour gérer tes blocages.</p>
+			<a class="onboarding-next passkey-action" href="/?login=true">Aller à la connexion</a>
+		}
+		else if (blockedUsers.Count == 0)
+		{
+			<p class="onboarding-copy">Aucun membre n’est bloqué.</p>
+		}
+		else
+		{
+			<ul class="passkey-list">
+				@foreach (var user in blockedUsers)
+				{
+					<li @key="user.UserId">
+						<span><strong>@user.DisplayName</strong><small>Bloqué le @user.CreatedAt.ToLocalTime().ToString("g")</small></span>
+						<button class="signout-button" type="button" @onclick="() => UnblockAsync(user)" disabled="@isBusy">Débloquer</button>
+					</li>
+				}
+			</ul>
+		}
+		@if (!string.IsNullOrWhiteSpace(feedback))
+		{
+			<p class="onboarding-feedback" role="status">@feedback</p>
+		}
+	</section>
+</main>
+
+@code {
+	private bool isLoading = true;
+	private bool isAuthenticated;
+	private bool isBusy;
+	private string feedback = "";
+	private List<BlockedUser> blockedUsers = [];
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			var session = await Http.GetFromJsonAsync<SessionResponse>("/api/session");
+			isAuthenticated = session?.IsAuthenticated == true;
+			if (isAuthenticated) await LoadBlocksAsync();
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isLoading = false;
+		}
+	}
+
+	private async Task LoadBlocksAsync()
+	{
+		using var response = await Http.GetAsync("/api/me/blocks");
+		if (response.StatusCode == HttpStatusCode.Unauthorized)
+		{
+			isAuthenticated = false;
+			return;
+		}
+		if (!response.IsSuccessStatusCode)
+		{
+			feedback = "La liste des blocages n’a pas pu être chargée.";
+			return;
+		}
+		blockedUsers = await response.Content.ReadFromJsonAsync<List<BlockedUser>>() ?? [];
+	}
+
+	private async Task UnblockAsync(BlockedUser user)
+	{
+		if (isBusy) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.DeleteAsync($"/api/me/blocks/{Uri.EscapeDataString(user.UserId)}");
+			if (response.IsSuccessStatusCode)
+			{
+				blockedUsers.Remove(user);
+				feedback = $"{user.DisplayName} n’est plus bloqué.";
+			}
+			else
+				feedback = "Ce membre n’a pas pu être débloqué. Réessaie.";
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private sealed class SessionResponse { public bool IsAuthenticated { get; set; } }
+	private sealed class BlockedUser { public string UserId { get; set; } = ""; public string DisplayName { get; set; } = ""; public DateTimeOffset CreatedAt { get; set; } }
+}
