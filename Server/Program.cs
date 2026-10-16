@@ -109,7 +109,7 @@ if (File.Exists(Path.Combine(publishedWwwroot, "index.html")) && Directory.Exist
 else
 {
 	var clientWwwroot = new[] { "Debug", "Release" }
-		.Select(configuration => Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "bin", configuration, "net9.0", "wwwroot")))
+		.Select(configuration => Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "bin", configuration, "net10.0", "wwwroot")))
 		.FirstOrDefault(Directory.Exists);
 	if (clientWwwroot is null)
 		throw new DirectoryNotFoundException("Blazor client output was not found. Build the solution first.");

@@ -31,7 +31,7 @@ public sealed class SecurityTests
             RedirectStandardError = true,
             UseShellExecute = false
         };
-        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net9.0", "TwoGether.Server.dll"));
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net10.0", "TwoGether.Server.dll"));
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.Environment["ASPNETCORE_URLS"] = address.ToString();
         start.Environment["TWOGETHER_DB_PATH"] = databasePath;
@@ -45,7 +45,7 @@ public sealed class SecurityTests
         {
             using var anonymous = CreateClient(address);
             await WaitForServerAsync(anonymous, server);
-            foreach (var asset in Directory.GetFiles(Path.Combine(serverDirectory, "..", "bin", "Release", "net9.0", "wwwroot", "_framework"), "icudt*.dat"))
+            foreach (var asset in Directory.GetFiles(Path.Combine(serverDirectory, "..", "bin", "Release", "net10.0", "wwwroot", "_framework"), "icudt*.dat"))
                 Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync($"/_framework/{Path.GetFileName(asset)}")).StatusCode);
             using var owner = CreateClient(address);
             using var requester = CreateClient(address);
@@ -168,7 +168,7 @@ public sealed class SecurityTests
             RedirectStandardError = true,
             UseShellExecute = false
         };
-        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net9.0", "TwoGether.Server.dll"));
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net10.0", "TwoGether.Server.dll"));
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.Environment["ASPNETCORE_URLS"] = address.ToString();
         start.Environment["TWOGETHER_DB_PATH"] = databasePath;

@@ -10,7 +10,7 @@ Application de rencontres de quartier réalisée avec Blazor WebAssembly et ASP.
 
 ## Démarrage rapide (Windows PowerShell)
 
-Installer le SDK .NET 9, puis depuis la racine du dépôt :
+Installer le SDK .NET 10 LTS, puis depuis la racine du dépôt :
 
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = "Development"

@@ -4,8 +4,8 @@
 
 2gether est une application web composée de deux projets :
 
-- `PocketTasks.csproj` est le client Blazor WebAssembly ciblant `net9.0`. Il contient les pages, l’interface, les styles et le code navigateur.
-- `Server/TwoGether.Server.csproj` est l’API ASP.NET Core ciblant `net9.0`. Elle gère les comptes Identity, SQLite, les profils, les photos, les messages, le courrier et la vérification des passkeys.
+- `PocketTasks.csproj` est le client Blazor WebAssembly ciblant `net10.0`. Il contient les pages, l’interface, les styles et le code navigateur.
+- `Server/TwoGether.Server.csproj` est l’API ASP.NET Core ciblant `net10.0`. Elle gère les comptes Identity, SQLite, les profils, les photos, les messages, le courrier et la vérification des passkeys.
 
 Les échanges navigateur/serveur se font sur la même origine et utilisent des cookies d’authentification HttpOnly. L’API sert également les fichiers du client.
 
@@ -26,12 +26,12 @@ Les échanges navigateur/serveur se font sur la même origine et utilisent des c
 ## 2. Prérequis
 
 - Windows, Linux ou macOS.
-- SDK .NET 9.x et un runtime ASP.NET Core correspondant. Vérifier avec `dotnet --info`.
+- SDK .NET 10.x et un runtime ASP.NET Core correspondant. Vérifier avec `dotnet --info`.
 - Accès au dépôt Git et à NuGet pendant la restauration initiale.
 - Un navigateur récent pour Blazor ; un navigateur et un appareil compatibles WebAuthn pour utiliser les passkeys.
 - Pour une installation publique : nom de domaine, HTTPS, serveur SMTP autorisé à envoyer depuis l’adresse configurée et stockage persistant.
 
-Le projet cible .NET 9. Vérifier son statut de support et planifier sa migration vers une version .NET encore prise en charge avant un déploiement public durable.
+Le projet cible .NET 10 LTS. Maintenir le SDK, le runtime et les packages Microsoft sur une version de maintenance prise en charge; contrôler régulièrement la politique officielle de support .NET.
 
 ## 3. Préparer le dépôt
 
