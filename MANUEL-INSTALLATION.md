@@ -16,6 +16,8 @@ Les échanges navigateur/serveur se font sur la même origine et utilisent des c
 | `Pages/PasswordRecovery.razor` | Demande de code et changement du mot de passe |
 | `Pages/Passkeys.razor` | Enregistrement, consultation et suppression des passkeys |
 | `Server/Program.cs` | Démarrage, Identity, persistance, origine de confiance WebAuthn, limitations et fichiers statiques |
+| `Server/Migrations/` | Historique versionné du schéma SQLite |
+| `Server/DatabaseMigrationRunner.cs` | Détection prudente des bases héritées et application des migrations |
 | `Server/AuthenticationApi.cs` | Routes Identity, récupération et vérification cryptographique WebAuthn |
 | `Server/TwoGetherApi.cs` | API des fonctionnalités sociales |
 | `Server/BackendModels.cs` | Modèles de données, y compris les clés publiques des passkeys |
@@ -38,11 +40,20 @@ Le projet cible .NET 10 LTS. Maintenir le SDK, le runtime et les packages Micros
 Depuis le répertoire racine :
 
 ```powershell
+dotnet tool restore
 dotnet restore .\Server\TwoGether.Server.csproj
 dotnet build .\Server\TwoGether.Server.csproj -c Release
 ```
 
 La référence au projet client construit aussi le WebAssembly et ses ressources statiques. L’API doit être démarrée depuis son projet (ou depuis le répertoire publié), afin que son répertoire de contenu et ses ressources soient correctement déterminés.
+
+Les migrations EF Core sont versionnées dans `Server/Migrations`. Pour ajouter une migration après un changement de modèle, depuis la racine :
+
+```powershell
+dotnet tool run dotnet-ef migrations add AjouterUnChamp --project .\Server\TwoGether.Server.csproj --output-dir Migrations
+```
+
+Au démarrage, l’application applique automatiquement les migrations en attente. N’exécuter qu’une instance pendant une migration SQLite et sauvegarder la base avant chaque déploiement.
 
 ## 4. Lancer en développement
 
@@ -122,7 +133,17 @@ Le nom de domaine WebAuthn (`RPID`) et les origines autorisées proviennent de `
 
 ### Persistance et mises à jour
 
-- Le serveur crée le schéma Identity et le tableau `PasskeyCredentials` au démarrage. Le tableau des passkeys est créé de manière idempotente pour les bases existantes ; effectuer une sauvegarde avant toute mise à jour.
+- Le serveur applique les migrations EF Core au démarrage. Une nouvelle base est créée par la migration initiale; les migrations suivantes ne doivent pas supprimer de données sans procédure explicite.
+- Les bases créées par une version antérieure à EF Core n’ont pas d’historique de migration. Arrêter le serveur et faire une copie de sauvegarde avant toute opération. Après vérification que le schéma existant correspond bien à `InitialSchema` (y compris `PasskeyCredentials`), exécuter depuis la racine :
+
+  ```powershell
+  if ([string]::IsNullOrWhiteSpace($env:TWOGETHER_DB_PATH)) { throw "Définis TWOGETHER_DB_PATH vers la base à reprendre." }
+  if (-not (Test-Path -LiteralPath $env:TWOGETHER_DB_PATH)) { throw "La base à reprendre est introuvable." }
+  Get-Content .\Server\Scripts\BaselineLegacySqlite.sql | sqlite3.exe "$env:TWOGETHER_DB_PATH"
+  if ($LASTEXITCODE -ne 0) { throw "La reprise de la base a échoué; ne redémarre pas le serveur." }
+  ```
+
+  Le script ne crée l’entrée de référence que si un compte existe déjà et qu’aucune migration n’est enregistrée. Redémarrer ensuite le serveur : il vérifie la présence de cette migration avant de continuer. Si le schéma diffère, ne pas marquer la migration comme appliquée; préparer une migration de reprise spécifique à cette base.
 - Stocker durablement et protéger la base, les sauvegardes et les clés ASP.NET Core Data Protection. Sans clés Data Protection persistantes, les cookies et jetons peuvent devenir invalides après redémarrage ou changement d’instance.
 - Limiter strictement les permissions de lecture/écriture de la base, des clés et des courriels de test. Les clés publiques WebAuthn ne sont pas des clés secrètes, mais restent des données de compte à protéger.
 - Configurer SPF, DKIM et DMARC pour le domaine d’expédition. Tester la délivrabilité, les liens HTTPS et le fonctionnement de la récupération avant la mise en service.

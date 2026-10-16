@@ -5,14 +5,90 @@ using System.Net.Sockets;
 using System.Text.Json;
 using ImageMagick;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using System.Text.RegularExpressions;
 using Xunit;
+using TwoGether.Server;
 
 namespace TwoGether.SecurityTests;
 
 public sealed class SecurityTests
 {
+    [Fact]
+    public async Task Existing_database_without_migration_history_is_preserved()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-legacy-{Guid.NewGuid():N}.db");
+        try
+        {
+            await using (var legacy = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await legacy.OpenAsync();
+                await using var command = legacy.CreateCommand();
+                command.CommandText = "CREATE TABLE AspNetUsers (Id TEXT NOT NULL PRIMARY KEY); INSERT INTO AspNetUsers (Id) VALUES ('existing-user');";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var options = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite($"Data Source={databasePath}")
+                .Options;
+            await using (var database = new AppDbContext(options))
+            {
+                var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => DatabaseMigrationRunner.MigrateAsync(database));
+                Assert.Contains("BaselineLegacySqlite.sql", exception.Message);
+            }
+
+            await using var verify = new SqliteConnection($"Data Source={databasePath}");
+            await verify.OpenAsync();
+            await using var verifyCommand = verify.CreateCommand();
+            verifyCommand.CommandText = "SELECT (SELECT COUNT(*) FROM AspNetUsers), (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '__EFMigrationsHistory');";
+            await using var reader = await verifyCommand.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1L, reader.GetInt64(0));
+            Assert.Equal(0L, reader.GetInt64(1));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+                File.Delete(databasePath + suffix);
+        }
+    }
+
+    [Fact]
+    public async Task Legacy_database_baseline_preserves_existing_accounts()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-baseline-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite($"Data Source={databasePath}")
+                .Options;
+            await using var database = new AppDbContext(options);
+            await database.Database.EnsureCreatedAsync();
+            await database.Database.ExecuteSqlRawAsync("""
+                INSERT INTO "AspNetUsers"
+                    ("Id", "EmailConfirmed", "PhoneNumberConfirmed", "TwoFactorEnabled", "LockoutEnabled", "AccessFailedCount")
+                VALUES ('preserved-user', 0, 0, 0, 1, 0);
+                """);
+            var baseline = await File.ReadAllTextAsync(
+                Path.Combine(FindServerDirectory(), "Scripts", "BaselineLegacySqlite.sql"));
+            await database.Database.ExecuteSqlRawAsync(baseline);
+
+            await DatabaseMigrationRunner.MigrateAsync(database);
+
+            Assert.Equal("preserved-user", await database.Users.Select(user => user.Id).SingleAsync());
+            Assert.Empty(await database.Database.GetPendingMigrationsAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+                File.Delete(databasePath + suffix);
+        }
+    }
+
     [Fact]
     public async Task Photos_location_and_rate_limits_enforce_security_boundaries()
     {

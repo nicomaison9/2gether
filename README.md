@@ -31,9 +31,11 @@ Ouvrir ensuite <http://localhost:5067>. En développement, les courriels sont é
 | `Server/AuthenticationApi.cs` | Routes Identity et vérification serveur des cérémonies WebAuthn |
 | `Server/TwoGetherApi.cs` | API des profils, photos, localisations et messages |
 | `Server/BackendModels.cs` | Modèles Identity, profils et passkeys |
+| `Server/Migrations/` | Historique versionné du schéma SQLite |
 | `Server/VerificationEmailSender.cs` | Envoi SMTP ou écriture locale des courriels |
 | `wwwroot/js/passkeys.js` | Adaptation WebAuthn du navigateur ; aucune donnée biométrique n’est lue par l’application |
 | `Server/Tests/` | Tests d’intégration des limites de sécurité, de la récupération et des passkeys |
+| `.github/workflows/ci.yml` | Build, tests, audit des dépendances et publication de validation |
 
 ## Limite de déploiement à connaître
 

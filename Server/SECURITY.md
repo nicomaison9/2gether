@@ -28,6 +28,7 @@ The regression test starts a local server on an ephemeral port with a temporary 
 ## Before public deployment
 
 - Serve only HTTPS. HTTP localhost is for development only.
+- Apply schema changes through the checked-in EF Core migrations. Existing databases created before migrations must be backed up, checked against the initial schema, and explicitly baselined with `Scripts/BaselineLegacySqlite.sql`; startup refuses to stamp or overwrite an untracked legacy schema.
 - Configure trusted reverse proxy forwarding before relying on IP quotas; never trust arbitrary client-provided forwarded headers. Behind an unconfigured proxy, authentication requests share the proxy IP quota.
 - Persist and protect Identity Data Protection keys; restrict database and backup file access. Data in SQLite, including exact coordinates and messages, is not application-encrypted or end-to-end encrypted.
 - Existing images stored before these changes are not automatically reencoded. Remove or securely reprocess them before public deployment.

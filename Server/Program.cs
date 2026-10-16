@@ -123,20 +123,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
 	var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-	await database.Database.EnsureCreatedAsync();
-	await database.Database.ExecuteSqlRawAsync("""
-		CREATE TABLE IF NOT EXISTS "PasskeyCredentials" (
-			"CredentialId" TEXT NOT NULL CONSTRAINT "PK_PasskeyCredentials" PRIMARY KEY,
-			"UserId" TEXT NOT NULL,
-			"PublicKey" BLOB NOT NULL,
-			"UserHandle" BLOB NOT NULL,
-			"SignatureCounter" INTEGER NOT NULL,
-			"CreatedAt" TEXT NOT NULL,
-			"LastUsedAt" TEXT NULL,
-			CONSTRAINT "FK_PasskeyCredentials_AspNetUsers_UserId" FOREIGN KEY ("UserId") REFERENCES "AspNetUsers" ("Id") ON DELETE CASCADE
-		);
-		CREATE INDEX IF NOT EXISTS "IX_PasskeyCredentials_UserId" ON "PasskeyCredentials" ("UserId");
-		""");
+	await DatabaseMigrationRunner.MigrateAsync(database);
 }
 
 app.Use(async (context, next) =>
