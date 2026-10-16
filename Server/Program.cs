@@ -107,6 +107,8 @@ var moderatorEmails = (builder.Configuration.GetSection("Moderation:ModeratorEma
 	.Where(email => !string.IsNullOrWhiteSpace(email))
 	.Select(email => email.Trim())
 	.ToHashSet(StringComparer.OrdinalIgnoreCase);
+if (builder.Environment.IsProduction() && moderatorEmails.Count == 0)
+	throw new InvalidOperationException("Configure at least one confirmed moderator email with Moderation:ModeratorEmails in Production.");
 builder.Services.AddAuthorization(options =>
 {
 	options.DefaultPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().RequireAssertion(async context =>

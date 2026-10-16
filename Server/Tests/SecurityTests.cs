@@ -18,6 +18,47 @@ namespace TwoGether.SecurityTests;
 public sealed class SecurityTests
 {
     [Fact]
+    public async Task Production_requires_a_moderator_email()
+    {
+        var serverDirectory = FindServerDirectory();
+        var temporaryDirectory = Path.Combine(Path.GetTempPath(), $"2gether-production-config-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryDirectory);
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = serverDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net10.0", "TwoGether.Server.dll"));
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
+        start.Environment["ASPNETCORE_URLS"] = "http://127.0.0.1:0";
+        start.Environment["TWOGETHER_DB_PATH"] = Path.Combine(temporaryDirectory, "production.db");
+        start.Environment["Email__Delivery"] = "Smtp";
+        start.Environment["Email__PublicOrigin"] = "https://2gether.invalid";
+        start.Environment["Email__FromAddress"] = "verification@2gether.invalid";
+        start.Environment["Email__Host"] = "smtp.2gether.invalid";
+        start.Environment["Email__Port"] = "587";
+        start.Environment["DataProtection__KeysPath"] = Path.Combine(temporaryDirectory, "keys");
+        using var server = Process.Start(start)!;
+        try
+        {
+            var standardOutput = server.StandardOutput.ReadToEndAsync();
+            var standardError = server.StandardError.ReadToEndAsync();
+            await server.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            var output = await standardOutput + await standardError;
+            Assert.NotEqual(0, server.ExitCode);
+            Assert.Contains("Moderation:ModeratorEmails", output);
+        }
+        finally
+        {
+            if (!server.HasExited) server.Kill(true);
+            await server.WaitForExitAsync();
+            if (Directory.Exists(temporaryDirectory)) Directory.Delete(temporaryDirectory, true);
+        }
+    }
+
+    [Fact]
     public async Task Existing_database_without_migration_history_is_preserved()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-legacy-{Guid.NewGuid():N}.db");

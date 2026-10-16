@@ -138,7 +138,7 @@ Les adresses transmises (`X-Forwarded-For` et `X-Forwarded-Proto`) ne sont prise
 
 Toutes les mutations de l’API utilisent un jeton antiforgery transmis dans l’en-tête `X-CSRF-TOKEN`. Le client Blazor récupère ce jeton avant chaque requête qui modifie des données. Ne pas désactiver ce contrôle sur les nouveaux endpoints.
 
-L’accès à l’espace de modération (`/moderation`) est réservé aux comptes confirmés dont l’adresse correspond à une valeur `Moderation__ModeratorEmails__*`. Configurer ces adresses dans l’environnement protégé de l’hébergeur; ne jamais exposer cette liste dans le dépôt ou la laisser contrôlable par les utilisateurs. Sans adresse configurée, aucun compte ne peut examiner ou traiter les signalements. Définir également une procédure de traitement et de conservation des signalements.
+L’accès à l’espace de modération (`/moderation`) est réservé aux comptes confirmés dont l’adresse correspond à une valeur `Moderation__ModeratorEmails__*`. Configurer ces adresses dans l’environnement protégé de l’hébergeur; ne jamais exposer cette liste dans le dépôt ou la laisser contrôlable par les utilisateurs. Le serveur refuse de démarrer en Production si aucune adresse de modérateur n’est configurée. Définir également une procédure de traitement et de conservation des signalements.
 
 ### Persistance et mises à jour
 
