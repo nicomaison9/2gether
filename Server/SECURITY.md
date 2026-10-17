@@ -18,6 +18,8 @@
 - Self-service account deletion requires the current password, removes the member’s profile, photos, passkeys, photo-access requests and messages in one database transaction, then clears the authentication cookie. Backups remain subject to the operator’s retention and deletion policy.
 - Members can block another member or submit one pending report per target; blocking hides both profiles and conversations and prevents messages and photo requests in either direction. Report submissions are limited to five per member per minute.
 - Moderation access is restricted to confirmed, non-suspended accounts whose exact email address is listed in `Moderation:ModeratorEmails`. Moderators can review the capped report queue, dismiss reports, suspend accounts, and reinstate suspended members; suspended accounts cannot use protected API features but can still access account deletion.
+- Premium subscriptions are created through Stripe Checkout; card details are handled by Stripe and never stored by 2gether. Premium access is granted only by verified, deduplicated Stripe webhooks for a current `active` or `trialing` subscription; stale subscription events cannot overwrite newer state. Webhook signatures are verified, webhook bodies are size-limited, and the webhook endpoint alone is exempt from antiforgery validation.
+- Account deletion first expires any reserved Checkout session and cancels any known Stripe subscription; if Stripe cannot confirm the operation, deletion is refused and logged. Stripe credentials are environment-specific secrets, required together in Production, and must use a live API key there.
 - SQLite native dependency updated to a version beyond the CVE-2025-6965 affected range.
 
 ## Verification
@@ -36,6 +38,7 @@ The regression test starts a local server on an ephemeral port with a temporary 
 - Serve only HTTPS. HTTP localhost is for development only.
 - Apply schema changes through the checked-in EF Core migrations. Existing databases created before migrations must be backed up, checked against the initial schema, and explicitly baselined with `Scripts/BaselineLegacySqlite.sql`; startup refuses to stamp or overwrite an untracked legacy schema.
 - Configure trusted reverse proxy forwarding before relying on IP quotas; never trust arbitrary client-provided forwarded headers. Behind an unconfigured proxy, authentication requests share the proxy IP quota.
+- Configure Stripe's monthly EUR Price, customer portal, Automatic Tax and signed webhook endpoint before enabling Premium. Keep test and live credentials separate; validate subscription creation, cancellation, tax settings and webhook delivery in test mode before accepting payments.
 - Persist and protect Identity Data Protection keys; restrict database and backup file access. Data in SQLite, including exact coordinates and messages, is not application-encrypted or end-to-end encrypted.
 - Existing images stored before these changes are not automatically reencoded. Remove or securely reprocess them before public deployment.
 - Configure at least one trusted moderator email and define a review/retention procedure for reports. Confirmed mailboxes are not proof of real identity and do not prevent disposable addresses or automated accounts.

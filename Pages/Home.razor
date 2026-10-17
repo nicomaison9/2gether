@@ -95,6 +95,7 @@
 			<button class="nav-item @(activePage == "messages" ? "selected" : "")" @onclick="ShowMessages"><span class="nav-symbol messages-symbol"></span><span>Messages</span><span class="nav-count">@state.Conversations.Count</span></button>
 			<button class="nav-item @(activePage == "profile" ? "selected" : "")" @onclick="ShowProfile"><span class="nav-symbol profile-symbol"></span><span>Mon profil</span></button>
 		</nav>
+		<a class="nav-item premium-nav-link" href="/premium">Guides Premium</a>
 		@if (isAuthenticated)
 		{
 			<a class="nav-item" href="/comptes-bloques">Membres bloqués</a>
@@ -110,6 +111,7 @@
 		<header class="mobile-header">
 			<a class="brand" href="/" aria-label="2gether, accueil"><span class="brand-mark" aria-hidden="true">2</span><span class="brand-wordmark"><strong>2gether</strong></span></a>
 			<button class="mobile-location" @onclick="ShowProfile" aria-label="Modifier mon secteur"><span class="location-pin"></span>@state.City</button>
+			<a class="premium-mobile-link" href="/premium">Premium</a>
 		</header>
 
 		<div class="content-wrap">

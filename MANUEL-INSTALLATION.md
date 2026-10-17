@@ -131,10 +131,26 @@ Configurer les variables d’environnement sur la plateforme d’hébergement, p
 | `DataProtection__KeysPath` | Chemin absolu vers un répertoire persistant et protégé; obligatoire en Production |
 | `ForwardedHeaders__KnownProxies__0` | Adresse IP du proxy inverse de confiance, si l’application est derrière un proxy; ajouter un index par proxy connu |
 | `Moderation__ModeratorEmails__0` | Adresse exacte d’un compte modérateur confirmé; ajouter `__1`, `__2`, etc. pour d’autres modérateurs |
+| `Stripe__SecretKey` | Clé API secrète Stripe `sk_live_…`, à enregistrer uniquement dans le coffre de secrets |
+| `Stripe__PremiumPriceId` | Identifiant `price_…` d’un prix actif, récurrent chaque mois et libellé en EUR |
+| `Stripe__WebhookSecret` | Secret de signature `whsec_…` de l’endpoint webhook correspondant à cette application |
 
 Le nom de domaine WebAuthn (`RPID`) et les origines autorisées proviennent de `Email__PublicOrigin`. Configurer cette valeur sur la même origine que celle affichée au navigateur ; ne pas accepter une origine issue d’un en-tête fourni librement par le client. Avec un proxy inverse, n’exposer que le proxy en HTTPS et limiter/valider les en-têtes transférés conformément à la configuration de l’hébergeur.
 
 Les adresses transmises (`X-Forwarded-For` et `X-Forwarded-Proto`) ne sont prises en compte que si elles proviennent d’une adresse configurée dans `ForwardedHeaders__KnownProxies__*`. Un proxy non déclaré n’est pas approuvé et ses en-têtes ne modifient ni l’adresse client ni le schéma détectés.
+
+### Configuration Stripe Premium
+
+La facturation est obligatoire en Production : le serveur refuse de démarrer si les trois variables Stripe ci-dessus ne sont pas renseignées ensemble. En Production, seule une clé `sk_live_…` est acceptée ; en développement, utiliser exclusivement la clé `sk_test_…`, un prix et un webhook de test. Sans ces trois variables en développement, les paiements restent désactivés.
+
+Dans le tableau de bord Stripe :
+
+1. Créer le produit éditorial Premium et son prix récurrent mensuel en EUR, puis renseigner son identifiant `price_…`. L’application affiche le montant Stripe configuré et active la collecte de taxe automatique au Checkout ; configurer les informations fiscales, l’immatriculation et le comportement fiscal du prix dans Stripe avant toute vente.
+2. Activer et configurer le portail client Stripe pour permettre aux abonnés de consulter et résilier leur abonnement.
+3. Créer un endpoint webhook HTTPS à `https://<domaine-public>/api/billing/webhook` et sélectionner les événements `checkout.session.completed`, `checkout.session.expired`, `customer.subscription.created`, `customer.subscription.updated` et `customer.subscription.deleted`. Copier son secret de signature `whsec_…` dans `Stripe__WebhookSecret`.
+4. En développement, utiliser l’URL locale publique de Stripe CLI comme endpoint de transfert et configurer le secret `whsec_…` fourni par cette session. Ce secret change avec la session CLI.
+
+Ne jamais réutiliser en Production un prix, une clé ou un secret de webhook de test, ni placer ces valeurs dans le dépôt ou les journaux. Avant ouverture au public, réaliser un parcours de souscription, renouvellement, résiliation et suppression de compte dans le mode test, puis vérifier l’arrivée des webhooks et la configuration fiscale du compte Stripe.
 
 Toutes les mutations de l’API utilisent un jeton antiforgery transmis dans l’en-tête `X-CSRF-TOKEN`. Le client Blazor récupère ce jeton avant chaque requête qui modifie des données. Ne pas désactiver ce contrôle sur les nouveaux endpoints.
 

@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ImageMagick;
 using Microsoft.Data.Sqlite;
@@ -40,6 +42,9 @@ public sealed class SecurityTests
         start.Environment["Email__Host"] = "smtp.2gether.invalid";
         start.Environment["Email__Port"] = "587";
         start.Environment["DataProtection__KeysPath"] = Path.Combine(temporaryDirectory, "keys");
+        start.Environment["Stripe__SecretKey"] = "sk_live_configuration_test";
+        start.Environment["Stripe__PremiumPriceId"] = "price_configuration_test";
+        start.Environment["Stripe__WebhookSecret"] = "whsec_configuration_test";
         using var server = Process.Start(start)!;
         try
         {
@@ -96,6 +101,87 @@ public sealed class SecurityTests
             SqliteConnection.ClearAllPools();
             foreach (var suffix in new[] { "", "-wal", "-shm" })
                 File.Delete(databasePath + suffix);
+        }
+    }
+
+    [Fact]
+    public async Task Premium_content_requires_a_current_subscription_from_a_signed_webhook()
+    {
+        const string webhookSecret = "whsec_test_signing_secret";
+        var serverDirectory = FindServerDirectory();
+        var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-premium-{Guid.NewGuid():N}.db");
+        var mailDirectory = databasePath + ".mail";
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        var address = new Uri($"http://127.0.0.1:{port}");
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = serverDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net10.0", "TwoGether.Server.dll"));
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        start.Environment["ASPNETCORE_URLS"] = address.ToString();
+        start.Environment["TWOGETHER_DB_PATH"] = databasePath;
+        start.Environment["Email__Delivery"] = "PickupDirectory";
+        start.Environment["Email__PublicOrigin"] = address.ToString();
+        start.Environment["Email__FromAddress"] = "verification@2gether.invalid";
+        start.Environment["Email__PickupDirectory"] = mailDirectory;
+        start.Environment["Stripe__SecretKey"] = "sk_test_not_a_real_secret";
+        start.Environment["Stripe__PremiumPriceId"] = "price_test_premium";
+        start.Environment["Stripe__WebhookSecret"] = webhookSecret;
+        using var server = Process.Start(start)!;
+        server.BeginOutputReadLine();
+        server.BeginErrorReadLine();
+        try
+        {
+            using var anonymous = CreateClient(address);
+            using var member = CreateClient(address);
+            await WaitForServerAsync(anonymous, server);
+            var userId = await CreateModerationAccountAsync(member, "premium@security.invalid", mailDirectory, "Premium");
+
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/premium/content")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/api/premium/content")).StatusCode);
+            Assert.False((await member.GetFromJsonAsync<JsonElement>("/api/billing/status")).GetProperty("hasPremium").GetBoolean());
+
+            var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var periodEnd = DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeSeconds();
+            var activeEvent = CreateSubscriptionEvent("evt_premium_active", "customer.subscription.created", userId, "active", created, periodEnd);
+            using var invalidWebhook = await PostStripeWebhookAsync(member, activeEvent, "invalid");
+            Assert.Equal(HttpStatusCode.BadRequest, invalidWebhook.StatusCode);
+            using var activeWebhook = await PostStripeWebhookAsync(member, activeEvent, CreateStripeSignature(activeEvent, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, activeWebhook.StatusCode);
+            using var duplicateWebhook = await PostStripeWebhookAsync(member, activeEvent, CreateStripeSignature(activeEvent, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, duplicateWebhook.StatusCode);
+
+            var status = await member.GetFromJsonAsync<JsonElement>("/api/billing/status");
+            Assert.True(status.GetProperty("hasPremium").GetBoolean());
+            var articles = await member.GetFromJsonAsync<JsonElement>("/api/premium/content");
+            Assert.Equal(3, articles.GetArrayLength());
+            Assert.False((await anonymous.GetAsync("/api/premium/content")).IsSuccessStatusCode);
+
+            var staleCancellation = CreateSubscriptionEvent("evt_premium_stale", "customer.subscription.deleted", userId, "canceled", created - 60, created - 60);
+            using var staleWebhook = await PostStripeWebhookAsync(member, staleCancellation, CreateStripeSignature(staleCancellation, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, staleWebhook.StatusCode);
+            Assert.True((await member.GetFromJsonAsync<JsonElement>("/api/billing/status")).GetProperty("hasPremium").GetBoolean());
+
+            var cancellation = CreateSubscriptionEvent("evt_premium_cancelled", "customer.subscription.deleted", userId, "canceled", created + 10, created - 60);
+            using var cancellationWebhook = await PostStripeWebhookAsync(member, cancellation, CreateStripeSignature(cancellation, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, cancellationWebhook.StatusCode);
+            Assert.False((await member.GetFromJsonAsync<JsonElement>("/api/billing/status")).GetProperty("hasPremium").GetBoolean());
+            Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/api/premium/content")).StatusCode);
+        }
+        finally
+        {
+            if (!server.HasExited) server.Kill(true);
+            await server.WaitForExitAsync();
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(databasePath + suffix);
+            if (Directory.Exists(mailDirectory)) Directory.Delete(mailDirectory, true);
         }
     }
 
@@ -171,6 +257,9 @@ public sealed class SecurityTests
             using var requester = CreateClient(address);
             var ownerId = await CreateAccountAsync(owner, "owner@security.invalid", mailDirectory);
             var requesterId = await CreateAccountAsync(requester, "requester@security.invalid", mailDirectory);
+			Assert.False((await owner.GetFromJsonAsync<JsonElement>("/api/billing/offer")).GetProperty("available").GetBoolean());
+			Assert.Equal(HttpStatusCode.ServiceUnavailable, (await owner.PostAsync("/api/billing/checkout", null)).StatusCode);
+			Assert.Equal(HttpStatusCode.ServiceUnavailable, (await owner.PostAsync("/api/billing/portal", null)).StatusCode);
 
             var mailCount = Directory.GetFiles(mailDirectory, "*.eml").Length;
             Assert.Equal(HttpStatusCode.OK, (await anonymous.PostAsJsonAsync("/api/auth/resendConfirmationEmail", new { Email = "unknown@security.invalid" })).StatusCode);
@@ -638,6 +727,69 @@ public sealed class SecurityTests
             }
         };
         return new HttpClient(handler) { BaseAddress = address };
+    }
+
+    private static string CreateSubscriptionEvent(
+        string eventId,
+        string eventType,
+        string userId,
+        string status,
+        long created,
+        long currentPeriodEnd) =>
+        JsonSerializer.Serialize(new
+        {
+            id = eventId,
+            @object = "event",
+            api_version = "2025-03-31.basil",
+            created,
+            data = new
+            {
+                @object = new
+                {
+                    id = "sub_test_premium",
+                    @object = "subscription",
+                    customer = "cus_test_premium",
+                    status,
+                    cancel_at_period_end = false,
+                    metadata = new Dictionary<string, string> { ["userId"] = userId },
+                    items = new
+                    {
+                        @object = "list",
+                        data = new[]
+                        {
+                            new
+                            {
+                                id = "si_test_premium",
+                                @object = "subscription_item",
+                                current_period_end = currentPeriodEnd
+                            }
+                        }
+                    }
+                }
+            },
+            livemode = false,
+            pending_webhooks = 1,
+            request = new { id = (string?)null, idempotency_key = (string?)null },
+            type = eventType
+        });
+
+    private static string CreateStripeSignature(string payload, string secret)
+    {
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var signedPayload = Encoding.UTF8.GetBytes($"{timestamp}.{payload}");
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var signature = Convert.ToHexString(hmac.ComputeHash(signedPayload)).ToLowerInvariant();
+        return $"t={timestamp},v1={signature}";
+    }
+
+    private static async Task<HttpResponseMessage> PostStripeWebhookAsync(HttpClient client, string payload, string signature)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/billing/webhook")
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+        request.Headers.TryAddWithoutValidation("Stripe-Signature", signature);
+        return await client.SendAsync(request);
     }
 
     private sealed class TestAntiforgeryHandler : DelegatingHandler

@@ -66,15 +66,25 @@ Dans **Mon profil > Gérer mes passkeys**, la liste montre les clés enregistré
 - **Sécurité :** depuis le profil détaillé d’un membre, le signaler ou le bloquer. Un blocage masque les profils et conversations dans les deux sens et empêche les nouveaux messages. Gérer ou annuler un blocage depuis **Membres bloqués**.
 - **Aperçu visiteur :** vérifier la présentation du profil.
 
-## 7. Supprimer son compte
+## 7. Découvrir Premium
+
+1. Ouvrir **Premium** dans la navigation et consulter le prix mensuel affiché. Le tarif et la devise sont fournis par le service de paiement.
+2. Choisir **S’abonner** pour ouvrir la page de paiement sécurisée de Stripe et suivre ses instructions. 2gether ne reçoit ni ne stocke le numéro de carte.
+3. L’accès aux guides Premium est activé après confirmation du paiement par Stripe. Le retour à 2gether après le paiement ne suffit pas à lui seul ; si l’accès tarde, actualiser la page après quelques instants.
+4. L’abonnement est renouvelé mensuellement. Depuis **Premium**, choisir **Gérer mon abonnement** pour ouvrir le portail Stripe, consulter l’abonnement ou le résilier. La résiliation empêche le renouvellement ; l’accès reste disponible jusqu’à la fin de la période déjà payée.
+
+Premium donne accès à des guides éditoriaux proposés par 2gether. Les photos privées des membres ne sont pas vendues et aucun paiement entre membres n’est proposé. La disponibilité du paiement dépend de la configuration Stripe de l’exploitant.
+
+## 8. Supprimer son compte
 
 1. Depuis ton profil, choisir **Supprimer mon compte**.
 2. Lire les données concernées, saisir le mot de passe actuel et confirmer l’action.
-3. La suppression déconnecte l’appareil et efface du serveur le profil, les photos, les passkeys, les demandes d’accès aux photos ainsi que les messages envoyés et reçus.
+3. Si un paiement ou un abonnement est en cours, le serveur demande d’abord à Stripe de l’expirer ou de le résilier. Si Stripe est indisponible, la suppression est refusée temporairement pour éviter de laisser un abonnement facturé sans compte.
+4. La suppression déconnecte l’appareil et efface du serveur le profil, les photos, les passkeys, les demandes d’accès aux photos ainsi que les messages envoyés et reçus.
 
-La suppression est définitive. Les signalements auxquels tu as participé et tes blocages sont également effacés. Les sauvegardes du serveur peuvent conserver temporairement une copie jusqu’à leur expiration selon la politique de sauvegarde de l’exploitant. En cas de problème de connexion ou d’oubli du mot de passe, utilise d’abord la récupération du compte.
+La suppression est définitive. Les signalements auxquels tu as participé et tes blocages sont également effacés. Stripe peut conserver les données de facturation conformément à ses propres obligations et politiques. Les sauvegardes du serveur peuvent conserver temporairement une copie jusqu’à leur expiration selon la politique de sauvegarde de l’exploitant. En cas de problème de connexion ou d’oubli du mot de passe, utilise d’abord la récupération du compte.
 
-## 8. Vie privée et dépannage
+## 9. Vie privée et dépannage
 
 - La localisation GPS est facultative. Les coordonnées exactes sont stockées par le serveur pour les comptes ; les autres membres ne voient qu’une approximation.
 - Les photos téléversées sont redimensionnées et leurs métadonnées sont supprimées par le serveur.

@@ -811,6 +811,22 @@ h1 em { color: var(--coral); }
 .onboarding-affinity-tools input, .onboarding-affinity-tools select { font-size: 14px; min-height: 44px; }
 .onboarding-passion { font-size: 13px; min-height: 44px; }
 .chat-refresh:focus-visible, .chat-person-details summary:focus-visible, .chat-starters button:focus-visible, .affinity-disclosure > summary:focus-visible { outline: 2px solid var(--lime); outline-offset: -2px; }
+.premium-card { max-width: 780px; }
+.premium-card h1 { font-size: 34px; line-height: 1.2; }
+.premium-offer, .premium-status, .premium-notice { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 8px; line-height: 1.55; margin: 18px 0; padding: 16px; }
+.premium-offer strong { color: var(--green); font-size: 26px; }
+.premium-offer span, .premium-status span { color: var(--muted); font-size: 13px; }
+.premium-status strong { color: var(--green); }
+.premium-notice { color: var(--ink); font-size: 13px; }
+.premium-consent { align-items: flex-start; color: var(--muted); display: flex; font-size: 12px; gap: 10px; line-height: 1.6; margin: 18px 0; }
+.premium-consent input { flex: 0 0 auto; height: 18px; margin-top: 2px; width: 18px; }
+.premium-article-list { display: grid; gap: 16px; margin: 24px 0; }
+.premium-article { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+.premium-article h2 { color: var(--ink); font-family: Georgia, 'Times New Roman', serif; font-size: 23px; font-weight: 400; margin: 0 0 12px; }
+.premium-article p:not(.eyebrow) { color: var(--muted); font-size: 14px; line-height: 1.7; }
+.premium-introduction { color: var(--ink) !important; font-weight: 600; }
+.premium-nav-link { color: var(--green); }
+.premium-mobile-link { align-self: center; color: var(--green); font-size: 12px; font-weight: 700; text-decoration: none; }
 
 @media (max-width: 640px) {
     .messages-view .subpage-heading { margin-bottom: 12px; }
@@ -818,6 +834,8 @@ h1 em { color: var(--coral); }
     .messages-view .subpage-heading h1 { font-size: 24px; }
     .messages-layout { height: calc(100dvh - 230px); min-height: 400px; }
     .messages-layout .chat-panel { height: 100%; min-height: 0; }
+    .premium-card h1 { font-size: 28px; }
+    .premium-article { padding: 16px; }
     .messages-layout .conversation-list { height: 100%; }
     .chat-header { padding-inline: 10px; }
     .chat-back { height: 44px; min-width: 36px; }

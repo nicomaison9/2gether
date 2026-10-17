@@ -19,6 +19,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 	public DbSet<PasskeyCredential> PasskeyCredentials => Set<PasskeyCredential>();
 	public DbSet<UserBlock> UserBlocks => Set<UserBlock>();
 	public DbSet<AbuseReport> AbuseReports => Set<AbuseReport>();
+	public DbSet<PremiumSubscription> PremiumSubscriptions => Set<PremiumSubscription>();
+	public DbSet<StripeWebhookReceipt> StripeWebhookReceipts => Set<StripeWebhookReceipt>();
+	public DbSet<PremiumCheckoutReservation> PremiumCheckoutReservations => Set<PremiumCheckoutReservation>();
 
 	protected override void OnModelCreating(ModelBuilder builder)
 	{
@@ -37,6 +40,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 		builder.Entity<UserBlock>().HasOne<AppUser>().WithMany().HasForeignKey(block => block.BlockedUserId).OnDelete(DeleteBehavior.Cascade);
 		builder.Entity<AbuseReport>().HasIndex(report => new { report.Status, report.CreatedAt });
 		builder.Entity<AbuseReport>().HasIndex(report => new { report.ReporterId, report.ReportedUserId, report.CreatedAt });
+		builder.Entity<PremiumSubscription>().HasKey(subscription => subscription.UserId);
+		builder.Entity<PremiumSubscription>().HasIndex(subscription => subscription.StripeSubscriptionId).IsUnique();
+		builder.Entity<PremiumSubscription>().HasOne<AppUser>().WithMany().HasForeignKey(subscription => subscription.UserId).OnDelete(DeleteBehavior.Cascade);
+		builder.Entity<StripeWebhookReceipt>().HasKey(receipt => receipt.EventId);
+		builder.Entity<StripeWebhookReceipt>().HasOne<AppUser>().WithMany().HasForeignKey(receipt => receipt.UserId).OnDelete(DeleteBehavior.Cascade);
+		builder.Entity<PremiumCheckoutReservation>().HasKey(reservation => reservation.UserId);
+		builder.Entity<PremiumCheckoutReservation>().HasIndex(reservation => reservation.StripeSessionId).IsUnique();
+		builder.Entity<PremiumCheckoutReservation>().HasOne<AppUser>().WithMany().HasForeignKey(reservation => reservation.UserId).OnDelete(DeleteBehavior.Cascade);
 	}
 }
 
@@ -134,6 +145,33 @@ public sealed class AbuseReport
 	[MaxLength(450)] public string? ModeratorId { get; set; }
 	public DateTimeOffset? ReviewedAt { get; set; }
 	[MaxLength(1000)] public string ModeratorNote { get; set; } = "";
+}
+
+public sealed class PremiumSubscription
+{
+	[MaxLength(450)] public string UserId { get; set; } = "";
+	[MaxLength(100)] public string StripeCustomerId { get; set; } = "";
+	[MaxLength(100)] public string StripeSubscriptionId { get; set; } = "";
+	[MaxLength(40)] public string Status { get; set; } = "";
+	public DateTimeOffset? CurrentPeriodEnd { get; set; }
+	public DateTimeOffset LastStripeEventCreatedAt { get; set; }
+	public bool CancelAtPeriodEnd { get; set; }
+	public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class StripeWebhookReceipt
+{
+	[MaxLength(255)] public string EventId { get; set; } = "";
+	[MaxLength(450)] public string UserId { get; set; } = "";
+	public DateTimeOffset ProcessedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class PremiumCheckoutReservation
+{
+	[MaxLength(450)] public string UserId { get; set; } = "";
+	[MaxLength(100)] public string? StripeSessionId { get; set; }
+	public DateTimeOffset ExpiresAt { get; set; }
+	public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public sealed record ProfileUpsertRequest(

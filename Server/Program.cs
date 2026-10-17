@@ -25,6 +25,18 @@ if (!MimeKit.MailboxAddress.TryParse(emailOptions.FromAddress, out _)
 	|| (emailOptions.Delivery == "PickupDirectory" && !builder.Environment.IsDevelopment())
 	|| (emailOptions.Delivery == "Smtp" && (string.IsNullOrWhiteSpace(emailOptions.Host) || emailOptions.Port is < 1 or > 65535)))
 	throw new InvalidOperationException("Configure Email delivery and FromAddress. PickupDirectory is allowed only in Development; SMTP requires a host and TLS port.");
+var stripeBillingOptions = builder.Configuration.GetSection("Stripe").Get<StripeBillingOptions>() ?? new();
+var stripeBillingValues = new[] { stripeBillingOptions.SecretKey, stripeBillingOptions.PremiumPriceId, stripeBillingOptions.WebhookSecret };
+var configuredStripeBillingValues = stripeBillingValues.Count(value => !string.IsNullOrWhiteSpace(value));
+if (configuredStripeBillingValues is > 0 and < 3)
+	throw new InvalidOperationException("Configure Stripe:SecretKey, Stripe:PremiumPriceId and Stripe:WebhookSecret together, or leave billing disabled in Development.");
+if (builder.Environment.IsProduction() && !stripeBillingOptions.IsConfigured)
+	throw new InvalidOperationException("Configure Stripe billing before starting in Production.");
+if (stripeBillingOptions.IsConfigured
+	&& (!stripeBillingOptions.PremiumPriceId.StartsWith("price_", StringComparison.Ordinal)
+		|| !stripeBillingOptions.WebhookSecret.StartsWith("whsec_", StringComparison.Ordinal)
+		|| !stripeBillingOptions.SecretKey.StartsWith(builder.Environment.IsProduction() ? "sk_live_" : "sk_test_", StringComparison.Ordinal)))
+	throw new InvalidOperationException("Use a Stripe price ID, webhook signing secret and API key for the current environment.");
 var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
 if (builder.Environment.IsProduction()
 	&& (string.IsNullOrWhiteSpace(dataProtectionKeysPath) || !Path.IsPathRooted(dataProtectionKeysPath)))
@@ -64,6 +76,8 @@ var dataProtection = builder.Services.AddDataProtection().SetApplicationName("2g
 if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
 	dataProtection.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
 builder.Services.AddSingleton(emailOptions);
+builder.Services.AddSingleton(stripeBillingOptions);
+builder.Services.AddSingleton<StripeBillingService>();
 builder.Services.AddTransient<IEmailSender<AppUser>, VerificationEmailSender>();
 builder.Services.Configure<DataProtectionTokenProviderOptions>(options => options.TokenLifespan = TimeSpan.FromHours(1));
 builder.Services.AddSingleton<IFido2>(_ => new Fido2(new Fido2Configuration
@@ -167,6 +181,12 @@ builder.Services.AddRateLimiter(options =>
 		{
 			PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
 		}));
+	options.AddPolicy("billing", context => RateLimitPartition.GetFixedWindowLimiter(
+		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+		_ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+	options.AddPolicy("billing-public", context => RateLimitPartition.GetFixedWindowLimiter(
+		context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+		_ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
 
 static string Category(HttpRequest request)
@@ -232,6 +252,7 @@ app.Use(async (context, next) =>
 app.Use(async (context, next) =>
 {
 	if (context.Request.Path.StartsWithSegments("/api")
+		&& !context.Request.Path.Equals("/api/billing/webhook", StringComparison.OrdinalIgnoreCase)
 		&& !HttpMethods.IsGet(context.Request.Method)
 		&& !HttpMethods.IsHead(context.Request.Method)
 		&& !HttpMethods.IsOptions(context.Request.Method)
@@ -257,6 +278,7 @@ contentTypes.Mappings[".dat"] = "application/octet-stream";
 app.UseStaticFiles(new StaticFileOptions { FileProvider = clientFileProvider, ContentTypeProvider = contentTypes });
 app.MapAuthenticationApi();
 app.MapTwoGetherApi();
+app.MapPremiumBillingApi();
 app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = clientFileProvider });
 
 app.Run();

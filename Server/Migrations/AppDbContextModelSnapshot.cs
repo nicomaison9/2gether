@@ -363,6 +363,71 @@ namespace TwoGether.Server.Migrations
                     b.ToTable("PhotoAccessRequests");
                 });
 
+            modelBuilder.Entity("TwoGether.Server.PremiumCheckoutReservation", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StripeSessionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("StripeSessionId")
+                        .IsUnique();
+
+                    b.ToTable("PremiumCheckoutReservations");
+                });
+
+            modelBuilder.Entity("TwoGether.Server.PremiumSubscription", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("CancelAtPeriodEnd")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("CurrentPeriodEnd")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("LastStripeEventCreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StripeCustomerId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StripeSubscriptionId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("StripeSubscriptionId")
+                        .IsUnique();
+
+                    b.ToTable("PremiumSubscriptions");
+                });
+
             modelBuilder.Entity("TwoGether.Server.ProfilePhoto", b =>
                 {
                     b.Property<Guid>("Id")
@@ -402,6 +467,27 @@ namespace TwoGether.Server.Migrations
                     b.HasIndex("OwnerId", "Visibility", "IsAvatar");
 
                     b.ToTable("ProfilePhotos");
+                });
+
+            modelBuilder.Entity("TwoGether.Server.StripeWebhookReceipt", b =>
+                {
+                    b.Property<string>("EventId")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("ProcessedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("EventId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("StripeWebhookReceipts");
                 });
 
             modelBuilder.Entity("TwoGether.Server.UserBlock", b =>
@@ -584,6 +670,24 @@ namespace TwoGether.Server.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("TwoGether.Server.PremiumCheckoutReservation", b =>
+                {
+                    b.HasOne("TwoGether.Server.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TwoGether.Server.PremiumSubscription", b =>
+                {
+                    b.HasOne("TwoGether.Server.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TwoGether.Server.ProfilePhoto", b =>
                 {
                     b.HasOne("TwoGether.Server.AppUser", "Owner")
@@ -593,6 +697,15 @@ namespace TwoGether.Server.Migrations
                         .IsRequired();
 
                     b.Navigation("Owner");
+                });
+
+            modelBuilder.Entity("TwoGether.Server.StripeWebhookReceipt", b =>
+                {
+                    b.HasOne("TwoGether.Server.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TwoGether.Server.UserBlock", b =>

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ImageMagick;
+using Stripe;
 
 namespace TwoGether.Server;
 
@@ -75,6 +76,7 @@ public static class TwoGetherApi
 		AppDbContext db,
 		UserManager<AppUser> users,
 		SignInManager<AppUser> signInManager,
+		StripeBillingService billing,
 		ILoggerFactory loggerFactory)
 	{
 		if (string.IsNullOrWhiteSpace(request.Password))
@@ -85,6 +87,42 @@ public static class TwoGetherApi
 		var passwordCheck = await signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
 		if (!passwordCheck.Succeeded)
 			return Results.Unauthorized();
+
+		var billingLogger = loggerFactory.CreateLogger("TwoGether.AccountDeletion");
+		var checkoutReservation = await db.PremiumCheckoutReservations.AsNoTracking()
+			.SingleOrDefaultAsync(item => item.UserId == user.Id, context.RequestAborted);
+		if (!string.IsNullOrWhiteSpace(checkoutReservation?.StripeSessionId))
+		{
+			try
+			{
+				await billing.ExpireOrCancelCheckoutAsync(checkoutReservation.StripeSessionId, context.RequestAborted);
+			}
+			catch (Exception exception) when (exception is StripeException or HttpRequestException or InvalidOperationException)
+			{
+				billingLogger.LogError(exception, "Pending Premium checkout cleanup failed during account deletion for user {UserId}.", user.Id);
+				return Results.Problem(
+					"Le paiement en cours n’a pas pu être fermé. Le compte n’a pas été supprimé; réessaie plus tard.",
+					statusCode: StatusCodes.Status503ServiceUnavailable);
+			}
+		}
+
+		var subscription = await db.PremiumSubscriptions.AsNoTracking()
+			.SingleOrDefaultAsync(item => item.UserId == user.Id, context.RequestAborted);
+		if (subscription is not null
+			&& subscription.Status is not ("canceled" or "incomplete_expired"))
+		{
+			try
+			{
+				await billing.CancelSubscriptionAsync(subscription.StripeSubscriptionId, context.RequestAborted);
+			}
+			catch (Exception exception) when (exception is StripeException or HttpRequestException or InvalidOperationException)
+			{
+				billingLogger.LogError(exception, "Premium subscription cancellation failed during account deletion for user {UserId}.", user.Id);
+				return Results.Problem(
+					"L’abonnement n’a pas pu être résilié. Le compte n’a pas été supprimé; réessaie plus tard.",
+					statusCode: StatusCodes.Status503ServiceUnavailable);
+			}
+		}
 
 		await using var transaction = await db.Database.BeginTransactionAsync(context.RequestAborted);
 		var userId = user.Id;
@@ -111,8 +149,7 @@ public static class TwoGetherApi
 		if (!deleteResult.Succeeded)
 		{
 			await transaction.RollbackAsync(context.RequestAborted);
-			var logger = loggerFactory.CreateLogger("TwoGether.AccountDeletion");
-			logger.LogError("Account deletion failed for user {UserId}: {Errors}", userId,
+			billingLogger.LogError("Account deletion failed for user {UserId}: {Errors}", userId,
 				string.Join(", ", deleteResult.Errors.Select(error => $"{error.Code}: {error.Description}")));
 			return Results.Problem(
 				"Le compte n’a pas pu être supprimé. Réessaie plus tard ou contacte l’assistance.",

@@ -1,0 +1,250 @@
+@page "/premium"
+@using System.Globalization
+@using System.Net
+@using System.Net.Http.Json
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Premium - 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card premium-card" aria-labelledby="premium-title">
+		<a class="back-link" href="/">← Retour à 2gether</a>
+		<p class="eyebrow">PREMIUM 2GETHER</p>
+		<h1 id="premium-title">Des idées pour des rencontres plus sereines.</h1>
+		<p class="onboarding-copy">Des guides éditoriaux sur les conversations, les limites et les premiers rendez-vous. Les photos des membres et leurs espaces privés ne sont jamais vendus ni déverrouillés par un abonnement.</p>
+
+		@if (!string.IsNullOrWhiteSpace(CheckoutState))
+		{
+			<p class="premium-notice" role="status">
+				@(CheckoutState == "success"
+					? "Le paiement revient de Stripe. Ton accès s’activera après confirmation sécurisée; vérifie ton abonnement dans un instant."
+					: "Tu as quitté le paiement. Aucun abonnement n’a été créé.")
+			</p>
+		}
+
+		@if (isLoading)
+		{
+			<p role="status">Vérification de l’offre et de ton accès…</p>
+		}
+		else
+		{
+			@if (isAuthenticated && hasPremium)
+			{
+				<div class="premium-status" role="status">
+					<strong>Ton accès Premium est actif.</strong>
+					@if (accessUntil is DateTimeOffset end)
+					{
+						<span>@(cancelAtPeriodEnd ? "Accès prévu jusqu’au" : "Prochaine échéance") @end.ToLocalTime().ToString("d", CultureInfo.GetCultureInfo("fr-FR")).</span>
+					}
+				</div>
+			}
+			else if (offer?.Available == true)
+			{
+				<div class="premium-offer">
+					<strong>@PriceText / mois</strong>
+					<span>Abonnement mensuel renouvelé automatiquement jusqu’à résiliation. Les taxes applicables sont calculées au paiement. Tu peux gérer ou résilier l’abonnement depuis le portail de facturation.</span>
+				</div>
+			}
+			else
+			{
+				<p class="premium-notice">L’abonnement Premium n’est pas encore disponible sur cette installation.</p>
+			}
+
+			@if (!isAuthenticated)
+			{
+				<p class="onboarding-copy">Connecte-toi pour vérifier ton accès et consulter l’offre.</p>
+				<a class="onboarding-next passkey-action" href="/?login=true">Me connecter</a>
+			}
+			else if (hasPremium)
+			{
+				@if (articles.Count > 0)
+				{
+					<div class="premium-article-list">
+						@foreach (var article in articles)
+						{
+							<article class="premium-article">
+								<p class="eyebrow">GUIDE PREMIUM</p>
+								<h2>@article.Title</h2>
+								<p class="premium-introduction">@article.Introduction</p>
+								@foreach (var paragraph in article.Paragraphs)
+								{
+									<p>@paragraph</p>
+								}
+							</article>
+						}
+					</div>
+				}
+				@if (canManageBilling)
+				{
+					<button class="onboarding-back" type="button" @onclick="OpenBillingPortalAsync" disabled="@isBusy">
+						@(isBusy ? "Ouverture…" : "Gérer ou résilier mon abonnement")
+					</button>
+				}
+			}
+			else if (isAuthenticated && (checkoutPending || subscriptionPending))
+			{
+				<p class="premium-notice" role="status">Une opération de paiement est déjà en cours. Attends sa confirmation ou son expiration avant d’en relancer une.</p>
+			}
+			else if (isAuthenticated && offer?.Available == true)
+			{
+				<label class="premium-consent">
+					<input type="checkbox" @bind="acceptedTerms" />
+					Je comprends que l’abonnement est mensuel, renouvelé automatiquement jusqu’à résiliation, et que son prix est @PriceText par mois avant les taxes applicables.
+				</label>
+				<button class="onboarding-next" type="button" @onclick="StartCheckoutAsync" disabled="@(isBusy || !acceptedTerms)">
+					@(isBusy ? "Redirection vers Stripe…" : "Continuer vers le paiement sécurisé")
+				</button>
+			}
+		}
+
+		@if (!string.IsNullOrWhiteSpace(feedback))
+		{
+			<p class="onboarding-feedback" role="alert">@feedback</p>
+		}
+	</section>
+</main>
+
+@code {
+	private bool isLoading = true;
+	private bool isAuthenticated;
+	private bool isBusy;
+	private bool hasPremium;
+	private bool cancelAtPeriodEnd;
+	private bool canManageBilling;
+	private bool checkoutPending;
+	private bool subscriptionPending;
+	private bool acceptedTerms;
+	private DateTimeOffset? accessUntil;
+	private PremiumOfferResponse? offer;
+	private List<PremiumArticleResponse> articles = [];
+	private string feedback = "";
+	[SupplyParameterFromQuery(Name = "checkout")] public string? CheckoutState { get; set; }
+
+	private string PriceText => offer?.AmountMinorUnits is long amount
+		? (amount / 100m).ToString("C", CultureInfo.GetCultureInfo("fr-FR"))
+		: "Prix indisponible";
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			var session = await Http.GetFromJsonAsync<SessionResponse>("/api/session");
+			isAuthenticated = session?.IsAuthenticated == true;
+
+			using var offerResponse = await Http.GetAsync("/api/billing/offer");
+			if (offerResponse.IsSuccessStatusCode)
+				offer = await offerResponse.Content.ReadFromJsonAsync<PremiumOfferResponse>();
+			else if (offerResponse.StatusCode != HttpStatusCode.ServiceUnavailable)
+				feedback = "L’offre n’a pas pu être chargée. Réessaie plus tard.";
+			else
+				feedback = "Le service de paiement est momentanément indisponible.";
+
+			if (isAuthenticated)
+			{
+				var status = await Http.GetFromJsonAsync<PremiumStatusResponse>("/api/billing/status");
+				hasPremium = status?.HasPremium == true;
+				accessUntil = status?.AccessUntil;
+				cancelAtPeriodEnd = status?.CancelAtPeriodEnd == true;
+				canManageBilling = status?.CanManageBilling == true;
+				checkoutPending = status?.CheckoutPending == true;
+				subscriptionPending = status?.SubscriptionPending == true;
+				if (hasPremium)
+				{
+					using var contentResponse = await Http.GetAsync("/api/premium/content");
+					if (contentResponse.IsSuccessStatusCode)
+						articles = await contentResponse.Content.ReadFromJsonAsync<List<PremiumArticleResponse>>() ?? [];
+					else
+						feedback = "Les contenus Premium n’ont pas pu être chargés. Réessaie dans un instant.";
+				}
+			}
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Vérifie ta connexion et réessaie.";
+		}
+		finally
+		{
+			isLoading = false;
+		}
+	}
+
+	private async Task StartCheckoutAsync()
+	{
+		if (isBusy || !acceptedTerms || !isAuthenticated) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.PostAsync("/api/billing/checkout", null);
+			if (response.StatusCode == HttpStatusCode.TooManyRequests)
+			{
+				feedback = "Trop de tentatives de paiement. Patiente une minute puis réessaie.";
+				return;
+			}
+			if (!response.IsSuccessStatusCode)
+			{
+				feedback = "Le paiement n’a pas pu être préparé. Vérifie l’offre ou réessaie plus tard.";
+				return;
+			}
+			var checkout = await response.Content.ReadFromJsonAsync<CheckoutResponse>();
+			NavigateToSecureProvider(checkout?.Url);
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur de paiement est indisponible. Aucun abonnement n’a été créé; réessaie plus tard.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private async Task OpenBillingPortalAsync()
+	{
+		if (isBusy || !isAuthenticated) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.PostAsync("/api/billing/portal", null);
+			if (response.StatusCode == HttpStatusCode.TooManyRequests)
+			{
+				feedback = "Trop de tentatives. Patiente une minute puis réessaie.";
+				return;
+			}
+			if (!response.IsSuccessStatusCode)
+			{
+				feedback = "Le portail de facturation est momentanément indisponible.";
+				return;
+			}
+			var portal = await response.Content.ReadFromJsonAsync<CheckoutResponse>();
+			NavigateToSecureProvider(portal?.Url);
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le portail de facturation est indisponible. Réessaie plus tard.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private void NavigateToSecureProvider(string? url)
+	{
+		if (!Uri.TryCreate(url, UriKind.Absolute, out var providerUri) || providerUri.Scheme != Uri.UriSchemeHttps)
+		{
+			feedback = "Le prestataire n’a pas fourni d’adresse de paiement sécurisée valide.";
+			return;
+		}
+		Navigation.NavigateTo(providerUri.ToString(), forceLoad: true);
+	}
+
+	private sealed class SessionResponse { public bool IsAuthenticated { get; set; } }
+	private sealed class PremiumOfferResponse { public bool Available { get; set; } public long? AmountMinorUnits { get; set; } public string Currency { get; set; } = ""; public string Interval { get; set; } = ""; public int IntervalCount { get; set; } }
+	private sealed class PremiumStatusResponse { public bool HasPremium { get; set; } public DateTimeOffset? AccessUntil { get; set; } public bool CancelAtPeriodEnd { get; set; } public bool CanManageBilling { get; set; } public bool CheckoutPending { get; set; } public bool SubscriptionPending { get; set; } }
+	private sealed class CheckoutResponse { public string Url { get; set; } = ""; }
+	private sealed class PremiumArticleResponse { public string Id { get; set; } = ""; public string Title { get; set; } = ""; public string Introduction { get; set; } = ""; public List<string> Paragraphs { get; set; } = []; }
+}
