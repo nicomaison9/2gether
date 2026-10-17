@@ -36,7 +36,7 @@ Ouvrir ensuite <http://localhost:5067>. En développement, les courriels sont é
 | `Server/Migrations/` | Historique versionné du schéma SQLite |
 | `Server/VerificationEmailSender.cs` | Envoi SMTP ou écriture locale des courriels |
 | `wwwroot/js/passkeys.js` | Adaptation WebAuthn du navigateur ; aucune donnée biométrique n’est lue par l’application |
-| `Server/Tests/` | Tests d’intégration de sécurité et test navigateur Playwright de la récupération de compte |
+| `Server/Tests/` | Tests d’intégration de sécurité et tests navigateur Playwright de récupération et d’administration |
 | `.github/workflows/ci.yml` | Build, tests, audit des dépendances et publication de validation |
 | `Jenkinsfile` | Pipeline Jenkins des tests de non-régression et de la publication de validation |
 

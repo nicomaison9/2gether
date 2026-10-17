@@ -94,7 +94,7 @@ curl.exe --fail --show-error http://localhost:5067/api/health
 dotnet test .\Server\Tests\TwoGether.SecurityTests.csproj -c Release --no-build
 ```
 
-Les tests créent leur propre base et leur propre dossier de courriels temporaires, démarrent un serveur local et nettoient ces données. Ils couvrent notamment l’absence de divulgation d’un compte lors d’une demande de récupération, le changement effectif du mot de passe, les codes à usage unique, l’exigence de vérification utilisateur des passkeys et l’usage unique des défis. Un test Playwright lance aussi Chromium en mode sans interface et vérifie que le parcours de récupération s’affiche, soumet une demande et refuse des mots de passe différents.
+Les tests créent leur propre base et leur propre dossier de courriels temporaires, démarrent un serveur local et nettoient ces données. Ils couvrent notamment l’absence de divulgation d’un compte lors d’une demande de récupération, le changement effectif du mot de passe, les codes à usage unique, l’exigence de vérification utilisateur des passkeys et l’usage unique des défis. Les tests Playwright lancent aussi Chromium en mode sans interface : ils vérifient la demande de récupération et son message non révélateur, le refus de mots de passe différents, ainsi que l’accès administrateur au curseur de conservation, ses bornes, l’enregistrement et la persistance après rechargement.
 
 Avant d’exécuter la suite complète, installer Chromium avec `pwsh .\Server\Tests\bin\Release\net10.0\playwright.ps1 install chromium` (après la compilation Release). Sous Linux, les dépendances système Chromium doivent également être présentes; sur GitHub Actions, l’installation les prépare avec `--with-deps`.
 
