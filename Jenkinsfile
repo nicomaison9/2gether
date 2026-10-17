@@ -1,6 +1,6 @@
 pipeline {
     agent {
-        label 'dotnet-10-linux'
+        label 'dotnet-10-linux-playwright'
     }
 
     options {
@@ -49,6 +49,12 @@ pipeline {
         stage('Compiler') {
             steps {
                 sh 'dotnet build Server/Tests/TwoGether.SecurityTests.csproj --configuration Release --no-restore'
+            }
+        }
+
+        stage('Installer Chromium') {
+            steps {
+                sh 'pwsh Server/Tests/bin/Release/net10.0/playwright.ps1 install chromium'
             }
         }
 

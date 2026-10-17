@@ -26,6 +26,8 @@ jobs:
         run: dotnet list Server/Tests/TwoGether.SecurityTests.csproj package --vulnerable --include-transitive
       - name: Build
         run: dotnet build Server/Tests/TwoGether.SecurityTests.csproj --configuration Release --no-restore
+      - name: Install Chromium for browser regression tests
+        run: pwsh Server/Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
       - name: Test
         run: dotnet test Server/Tests/TwoGether.SecurityTests.csproj --configuration Release --no-build
       - name: Check EF migration snapshot

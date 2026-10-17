@@ -29,6 +29,7 @@ Les échanges navigateur/serveur se font sur la même origine et utilisent des c
 
 - Windows, Linux ou macOS.
 - SDK .NET 10.x et un runtime ASP.NET Core correspondant. Vérifier avec `dotnet --info`.
+- PowerShell 7 (`pwsh`) pour installer Chromium en vue des tests navigateur.
 - Accès au dépôt Git et à NuGet pendant la restauration initiale.
 - Un navigateur récent pour Blazor ; un navigateur et un appareil compatibles WebAuthn pour utiliser les passkeys.
 - Pour une installation publique : nom de domaine, HTTPS, serveur SMTP autorisé à envoyer depuis l’adresse configurée et stockage persistant.
@@ -87,22 +88,26 @@ Arrêter le serveur avec `Ctrl+C`.
 Dans une autre fenêtre PowerShell, depuis la racine :
 
 ```powershell
+dotnet build .\Server\Tests\TwoGether.SecurityTests.csproj -c Release
+pwsh .\Server\Tests\bin\Release\net10.0\playwright.ps1 install chromium
 curl.exe --fail --show-error http://localhost:5067/api/health
-dotnet test .\Server\Tests\TwoGether.SecurityTests.csproj -c Release
+dotnet test .\Server\Tests\TwoGether.SecurityTests.csproj -c Release --no-build
 ```
 
-Les tests créent leur propre base et leur propre dossier de courriels temporaires, démarrent un serveur local et nettoient ces données. Ils couvrent notamment l’absence de divulgation d’un compte lors d’une demande de récupération, le changement effectif du mot de passe, les codes à usage unique, l’exigence de vérification utilisateur des passkeys et l’usage unique des défis.
+Les tests créent leur propre base et leur propre dossier de courriels temporaires, démarrent un serveur local et nettoient ces données. Ils couvrent notamment l’absence de divulgation d’un compte lors d’une demande de récupération, le changement effectif du mot de passe, les codes à usage unique, l’exigence de vérification utilisateur des passkeys et l’usage unique des défis. Un test Playwright lance aussi Chromium en mode sans interface et vérifie que le parcours de récupération s’affiche, soumet une demande et refuse des mots de passe différents.
+
+Avant d’exécuter la suite complète, installer Chromium avec `pwsh .\Server\Tests\bin\Release\net10.0\playwright.ps1 install chromium` (après la compilation Release). Sous Linux, les dépendances système Chromium doivent également être présentes; sur GitHub Actions, l’installation les prépare avec `--with-deps`.
 
 Les tests ne remplacent pas une vérification sur appareil réel. Avant ouverture aux utilisateurs, tester la création, la connexion et la suppression d’une passkey avec les navigateurs et systèmes d’exploitation ciblés.
 
 ### Automatiser les tests de non-régression avec Jenkins
 
-Jenkins peut exécuter automatiquement la même suite de contrôles à chaque changement et avant l’intégration d’une branche. Cela permet de repérer tôt une régression, mais ne remplace ni la revue du code, ni les essais sur appareils réels, ni une procédure de déploiement contrôlée. Le dépôt contient un `Jenkinsfile` déclaratif; la pipeline compile, lance les tests, contrôle les dépendances vulnérables et les migrations EF Core, puis archive une publication de validation. Elle ne déploie pas l’application et n’utilise aucun secret de production.
+Jenkins peut exécuter automatiquement la même suite de contrôles à chaque changement et avant l’intégration d’une branche. Cela permet de repérer tôt une régression, mais ne remplace ni la revue du code, ni les essais sur appareils réels, ni une procédure de déploiement contrôlée. Le dépôt contient un `Jenkinsfile` déclaratif; la pipeline compile, installe Chromium, lance les tests d’intégration et le parcours navigateur, contrôle les dépendances vulnérables et les migrations EF Core, puis archive une publication de validation. Elle ne déploie pas l’application et n’utilise aucun secret de production.
 
 #### Prérequis de l’agent Jenkins
 
 - Un contrôleur Jenkins maintenu à jour, avec les plugins **Pipeline** et **Git**.
-- Un agent Linux disponible avec l’étiquette `dotnet-10-linux`, Git et le SDK .NET 10.x dans son `PATH`. L’agent doit pouvoir accéder au dépôt Git et à NuGet.
+- Un agent Linux disponible avec l’étiquette `dotnet-10-linux-playwright`, Git, le SDK .NET 10.x, PowerShell 7 (`pwsh`) et les dépendances système de Chromium. L’agent doit pouvoir accéder au dépôt Git et à NuGet.
 - Pour découvrir automatiquement les demandes de fusion GitHub, installer/configurer le plugin **GitHub Branch Source** et ses identifiants Jenkins. Un dépôt public n’a pas besoin d’identifiants de lecture.
 - Le contrôleur Jenkins doit être accessible en HTTPS depuis le fournisseur Git pour recevoir les webhooks. Ne pas exposer Jenkins sans authentification ni ouvrir son interface d’administration à Internet.
 
