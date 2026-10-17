@@ -30,6 +30,7 @@ Ouvrir ensuite <http://localhost:5067>. En développement, les courriels sont é
 | `Server/Program.cs` | Configuration du serveur, d’Identity, de SQLite, du courrier, de WebAuthn et des limites de débit |
 | `Server/AuthenticationApi.cs` | Routes Identity et vérification serveur des cérémonies WebAuthn |
 | `Server/TwoGetherApi.cs` | API des profils, photos, localisations et messages |
+| `Server/AdministrationApi.cs` | Accès administrateur distinct, réglages de monétisation et journal des changements |
 | `Server/BackendModels.cs` | Modèles Identity, profils, passkeys, blocages et signalements |
 | `Server/Migrations/` | Historique versionné du schéma SQLite |
 | `Server/VerificationEmailSender.cs` | Envoi SMTP ou écriture locale des courriels |

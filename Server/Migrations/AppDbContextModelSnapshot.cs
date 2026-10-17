@@ -198,6 +198,35 @@ namespace TwoGether.Server.Migrations
                     b.ToTable("AbuseReports");
                 });
 
+            modelBuilder.Entity("TwoGether.Server.AdministrativeAuditEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActorUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AdministrativeAuditEntries");
+                });
+
             modelBuilder.Entity("TwoGether.Server.AppUser", b =>
                 {
                     b.Property<string>("Id")
@@ -294,6 +323,28 @@ namespace TwoGether.Server.Migrations
                     b.HasIndex("SenderId", "RecipientId", "SentAt");
 
                     b.ToTable("DirectMessages");
+                });
+
+            modelBuilder.Entity("TwoGether.Server.MonetizationSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("PremiumSalesEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("MonetizationSettings");
                 });
 
             modelBuilder.Entity("TwoGether.Server.PasskeyCredential", b =>

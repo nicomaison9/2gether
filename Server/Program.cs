@@ -123,6 +123,12 @@ var moderatorEmails = (builder.Configuration.GetSection("Moderation:ModeratorEma
 	.ToHashSet(StringComparer.OrdinalIgnoreCase);
 if (builder.Environment.IsProduction() && moderatorEmails.Count == 0)
 	throw new InvalidOperationException("Configure at least one confirmed moderator email with Moderation:ModeratorEmails in Production.");
+var administratorAccess = new AdministratorAccess(
+	(builder.Configuration.GetSection("Administration:AdministratorEmails").Get<string[]>() ?? [])
+		.Where(email => !string.IsNullOrWhiteSpace(email)));
+if (builder.Environment.IsProduction() && !administratorAccess.IsConfigured)
+	throw new InvalidOperationException("Configure at least one confirmed administrator email with Administration:AdministratorEmails in Production.");
+builder.Services.AddSingleton(administratorAccess);
 builder.Services.AddAuthorization(options =>
 {
 	options.DefaultPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().RequireAssertion(async context =>
@@ -149,6 +155,15 @@ builder.Services.AddAuthorization(options =>
 			return user is not null && user.EmailConfirmed && !user.IsSuspended
 				&& moderatorEmails.Contains(user.Email ?? "");
 		}));
+	options.AddPolicy("administrator", policy => policy
+			.RequireAuthenticatedUser()
+			.RequireAssertion(async context =>
+			{
+				if (context.Resource is not HttpContext httpContext) return false;
+				var user = await httpContext.RequestServices.GetRequiredService<UserManager<AppUser>>().GetUserAsync(context.User);
+				return user is not null && user.EmailConfirmed && !user.IsSuspended
+					&& administratorAccess.Allows(user.Email);
+			}));
 });
 builder.Services.AddRateLimiter(options =>
 {
@@ -169,6 +184,9 @@ builder.Services.AddRateLimiter(options =>
 		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
 		_ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 	options.AddPolicy("moderation", context => RateLimitPartition.GetFixedWindowLimiter(
+		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+		_ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+	options.AddPolicy("administration", context => RateLimitPartition.GetFixedWindowLimiter(
 		context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
 		_ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 	options.AddPolicy("messages", context => RateLimitPartition.GetFixedWindowLimiter(
@@ -279,6 +297,7 @@ app.UseStaticFiles(new StaticFileOptions { FileProvider = clientFileProvider, Co
 app.MapAuthenticationApi();
 app.MapTwoGetherApi();
 app.MapPremiumBillingApi();
+app.MapAdministrationApi();
 app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = clientFileProvider });
 
 app.Run();

@@ -1,0 +1,170 @@
+@page "/administration/monetisation"
+@using System.Net
+@using System.Net.Http.Json
+@inject HttpClient Http
+
+<PageTitle>Monétisation - Administration 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card admin-card" aria-labelledby="admin-monetization-title">
+		<a class="back-link" href="/administration">← Tableau de bord administratif</a>
+		<p class="eyebrow">ADMINISTRATION · MONÉTISATION</p>
+		<h1 id="admin-monetization-title">Des réglages explicites.</h1>
+		@if (isLoading)
+		{
+			<p role="status">Chargement des réglages…</p>
+		}
+		else if (!isAdministrator)
+		{
+			<p class="onboarding-feedback" role="alert">@feedback</p>
+		}
+		else if (settings is not null)
+		{
+			<nav class="admin-module-nav" aria-label="Modules d’administration">
+				<a href="/administration">Vue d’ensemble</a>
+				<a href="/moderation">Modération</a>
+				<a href="/administration/monetisation" aria-current="page">Monétisation</a>
+			</nav>
+
+			<p class="admin-policy-note">Les fonctions essentielles de rencontre, de messagerie et de sécurité restent gratuites. Ce réglage ne concerne que l’ouverture de nouvelles souscriptions Premium.</p>
+			<section class="admin-module" aria-labelledby="admin-premium-sales-heading">
+				<h2 id="admin-premium-sales-heading">Abonnements Premium</h2>
+				<div class="admin-setting-row">
+					<div>
+						<strong>Nouvelles souscriptions</strong>
+						<p>@(settings.PremiumSalesEnabled ? "Les membres peuvent s’abonner si le prix Stripe est disponible." : "La page Premium reste visible, mais les nouvelles souscriptions sont fermées.")</p>
+					</div>
+					<label class="admin-toggle">
+						<span class="sr-only">Ouvrir ou fermer les nouvelles souscriptions Premium</span>
+						<input type="checkbox" @bind="pendingPremiumSalesEnabled" disabled="@((!settings.StripeConfigured && !settings.PremiumSalesEnabled) || isBusy)" />
+						<span aria-hidden="true"></span>
+					</label>
+				</div>
+				@if (!settings.StripeConfigured)
+				{
+					<p class="admin-status-note">Stripe n’est pas configuré. Renseigne les secrets dans l’environnement sécurisé avant d’ouvrir les souscriptions.</p>
+				}
+				@if (pendingPremiumSalesEnabled != settings.PremiumSalesEnabled)
+				{
+					<button class="onboarding-next admin-save-button" type="button" @onclick="SaveAsync" disabled="@isBusy">
+						@(isBusy ? "Vérification et enregistrement…" : "Enregistrer le réglage")
+					</button>
+				}
+			</section>
+
+			<section class="admin-module" aria-labelledby="admin-advertising-heading">
+				<h2 id="admin-advertising-heading">Publicités et partenariats</h2>
+				<div class="admin-setting-row">
+					<div>
+						<strong>Aucune publicité n’est diffusée</strong>
+						<p>Le branchement d’un fournisseur, les emplacements, les règles de fréquence et les informations de consentement ne sont pas encore intégrés.</p>
+					</div>
+					<span class="admin-status-badge">Non disponible</span>
+				</div>
+				<p class="admin-status-note">Cette rubrique est séparée de Premium pour permettre son évolution sans activer de publicité ni de suivi avant leur conception et validation.</p>
+			</section>
+
+			@if (!string.IsNullOrWhiteSpace(feedback))
+			{
+				<p class="onboarding-feedback" role="status">@feedback</p>
+			}
+			@if (settings.UpdatedAt is DateTimeOffset updatedAt)
+			{
+				<p class="admin-last-updated">Dernière modification : @updatedAt.ToLocalTime().ToString("g")</p>
+			}
+		}
+	</section>
+</main>
+
+@code {
+	private bool isLoading = true;
+	private bool isAdministrator;
+	private bool isBusy;
+	private bool pendingPremiumSalesEnabled;
+	private string feedback = "";
+	private AdministrationMonetizationResponse? settings;
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			using var response = await Http.GetAsync("/api/administration/monetization");
+			if (response.StatusCode == HttpStatusCode.Unauthorized)
+				feedback = "Connecte-toi avec un compte administrateur configuré.";
+			else if (response.StatusCode == HttpStatusCode.Forbidden)
+				feedback = "Ce compte n’est pas autorisé à modifier la monétisation.";
+			else if (!response.IsSuccessStatusCode)
+				feedback = "Les réglages de monétisation n’ont pas pu être chargés.";
+			else
+			{
+				isAdministrator = true;
+				settings = await response.Content.ReadFromJsonAsync<AdministrationMonetizationResponse>();
+				pendingPremiumSalesEnabled = settings?.PremiumSalesEnabled == true;
+			}
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isLoading = false;
+		}
+	}
+
+	private async Task SaveAsync()
+	{
+		var originalSettings = settings;
+		if (isBusy || originalSettings is null || pendingPremiumSalesEnabled == originalSettings.PremiumSalesEnabled) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.PutAsJsonAsync(
+				"/api/administration/monetization",
+				new UpdateAdministrationMonetizationRequest(pendingPremiumSalesEnabled));
+			if (response.IsSuccessStatusCode)
+			{
+				settings = await response.Content.ReadFromJsonAsync<AdministrationMonetizationResponse>();
+				pendingPremiumSalesEnabled = settings?.PremiumSalesEnabled == true;
+				feedback = "Le réglage a été enregistré.";
+			}
+			else
+			{
+				var error = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+				feedback = error?.Error ?? "Le réglage n’a pas été enregistré. Vérifie Stripe et réessaie.";
+				pendingPremiumSalesEnabled = originalSettings.PremiumSalesEnabled;
+			}
+		}
+		catch (HttpRequestException)
+		{
+			pendingPremiumSalesEnabled = originalSettings.PremiumSalesEnabled;
+			feedback = "Le serveur est indisponible. Le réglage n’a pas été confirmé; recharge la page avant de réessayer.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private sealed class AdministrationMonetizationResponse
+	{
+		public bool CoreFeaturesRemainFree { get; set; }
+		public bool PremiumSalesEnabled { get; set; }
+		public bool StripeConfigured { get; set; }
+		public bool AdvertisingEnabled { get; set; }
+		public bool AdvertisingIntegrationAvailable { get; set; }
+		public DateTimeOffset? UpdatedAt { get; set; }
+	}
+
+	private sealed class UpdateAdministrationMonetizationRequest(bool premiumSalesEnabled)
+	{
+		public bool PremiumSalesEnabled { get; } = premiumSalesEnabled;
+	}
+
+	private sealed class ApiErrorResponse
+	{
+		public string? Error { get; set; }
+	}
+}

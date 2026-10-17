@@ -1,0 +1,151 @@
+@page "/administration"
+@using System.Net
+@using System.Net.Http.Json
+@inject HttpClient Http
+
+<PageTitle>Administration - 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card admin-card" aria-labelledby="administration-title">
+		<a class="back-link" href="/">← Retour à 2gether</a>
+		<p class="eyebrow">ESPACE RÉSERVÉ</p>
+		<h1 id="administration-title">Administration.</h1>
+		@if (isLoading)
+		{
+			<p role="status">Vérification des droits et chargement du tableau de bord…</p>
+		}
+		else if (!isAdministrator)
+		{
+			<p class="onboarding-feedback" role="alert">@feedback</p>
+		}
+		else if (overview is not null)
+		{
+			<nav class="admin-module-nav" aria-label="Modules d’administration">
+				<a href="/administration" aria-current="page">Vue d’ensemble</a>
+				<a href="/moderation">Modération</a>
+				<a href="/administration/monetisation">Monétisation</a>
+			</nav>
+
+			@if (!string.IsNullOrWhiteSpace(feedback))
+			{
+				<p class="onboarding-feedback" role="status">@feedback</p>
+			}
+
+			<section class="admin-module" aria-labelledby="admin-overview-heading">
+				<h2 id="admin-overview-heading">État du service</h2>
+				<div class="admin-stat-grid">
+					<article class="admin-stat"><span>Membres confirmés</span><strong>@overview.ConfirmedMembers</strong></article>
+					<article class="admin-stat"><span>Signalements en attente</span><strong>@overview.PendingReports</strong></article>
+					<article class="admin-stat"><span>Comptes suspendus</span><strong>@overview.SuspendedMembers</strong></article>
+					<article class="admin-stat"><span>Configuration Stripe</span><strong>@(overview.StripeConfigured ? "Présente" : "Absente")</strong></article>
+				</div>
+			</section>
+
+			<section class="admin-module" aria-labelledby="admin-modules-heading">
+				<h2 id="admin-modules-heading">Modules</h2>
+				<div class="admin-module-grid">
+					<a class="admin-module-card" href="/moderation">
+						<strong>Modération et sécurité</strong>
+						<span>Traiter les signalements et gérer les suspensions.</span>
+						<small>@overview.PendingReports signalement(s) en attente</small>
+					</a>
+					<a class="admin-module-card" href="/administration/monetisation">
+						<strong>Monétisation</strong>
+						<span>Contrôler les nouvelles souscriptions et suivre les options prévues.</span>
+						<small>@(overview.PremiumSalesEnabled ? "Souscriptions Premium ouvertes" : "Souscriptions Premium fermées")</small>
+					</a>
+					<article class="admin-module-card admin-module-card-static">
+						<strong>Contenus éditoriaux</strong>
+						<span>Les guides Premium sont encore versionnés dans le code source.</span>
+						<small>Gestion directe depuis l’administration non disponible.</small>
+					</article>
+					<article class="admin-module-card admin-module-card-static">
+						<strong>Infrastructure et confidentialité</strong>
+						<span>Les secrets et réglages d’hébergement restent dans le coffre de configuration.</span>
+						<small>Ne jamais saisir de clé Stripe ou SMTP dans ce menu.</small>
+					</article>
+				</div>
+			</section>
+
+			<section class="admin-module" aria-labelledby="admin-audit-heading">
+				<h2 id="admin-audit-heading">Journal des changements administratifs</h2>
+				@if (auditEntries.Count == 0)
+				{
+					<p class="onboarding-copy">Aucun changement administratif enregistré.</p>
+				}
+				else
+				{
+					<ol class="admin-audit-list">
+						@foreach (var entry in auditEntries)
+						{
+							<li>
+								<time datetime="@entry.CreatedAt.ToString("O")">@entry.CreatedAt.ToLocalTime().ToString("g")</time>
+								<strong>@entry.Action</strong>
+								<span>@entry.Details</span>
+								<small>Administrateur : @entry.ActorUserId</small>
+							</li>
+						}
+					</ol>
+				}
+			</section>
+		}
+	</section>
+</main>
+
+@code {
+	private bool isLoading = true;
+	private bool isAdministrator;
+	private string feedback = "";
+	private AdministrationOverviewResponse? overview;
+	private List<AdministrationAuditResponse> auditEntries = [];
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			using var response = await Http.GetAsync("/api/administration/overview");
+			if (response.StatusCode == HttpStatusCode.Unauthorized)
+				feedback = "Connecte-toi avec un compte administrateur configuré.";
+			else if (response.StatusCode == HttpStatusCode.Forbidden)
+				feedback = "Ce compte n’est pas autorisé à accéder à l’administration.";
+			else if (!response.IsSuccessStatusCode)
+				feedback = "Le tableau de bord administratif n’a pas pu être chargé.";
+			else
+			{
+				isAdministrator = true;
+				overview = await response.Content.ReadFromJsonAsync<AdministrationOverviewResponse>();
+				using var auditResponse = await Http.GetAsync("/api/administration/audit");
+				if (auditResponse.IsSuccessStatusCode)
+					auditEntries = await auditResponse.Content.ReadFromJsonAsync<List<AdministrationAuditResponse>>() ?? [];
+				else
+					feedback = "Le journal administratif n’a pas pu être chargé.";
+			}
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isLoading = false;
+		}
+	}
+
+	private sealed class AdministrationOverviewResponse
+	{
+		public int ConfirmedMembers { get; set; }
+		public int PendingReports { get; set; }
+		public int SuspendedMembers { get; set; }
+		public bool StripeConfigured { get; set; }
+		public bool PremiumSalesEnabled { get; set; }
+	}
+
+	private sealed class AdministrationAuditResponse
+	{
+		public DateTimeOffset CreatedAt { get; set; }
+		public string ActorUserId { get; set; } = "";
+		public string Action { get; set; } = "";
+		public string Details { get; set; } = "";
+	}
+}

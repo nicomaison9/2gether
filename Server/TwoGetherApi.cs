@@ -20,15 +20,15 @@ public static class TwoGetherApi
 				? Results.Ok(new { status = "ok" })
 				: Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
 		app.MapGet("/api/registration-options", (EmailDeliveryOptions options) => Results.Ok(new { localEmailDelivery = options.Delivery == "PickupDirectory" }));
-		app.MapGet("/api/session", async (ClaimsPrincipal principal, AppDbContext db, UserManager<AppUser> users) =>
+		app.MapGet("/api/session", async (ClaimsPrincipal principal, AppDbContext db, UserManager<AppUser> users, AdministratorAccess administrators) =>
 		{
-			if (principal.Identity?.IsAuthenticated != true) return Results.Ok(new { isAuthenticated = false, accountSuspended = false, email = "" });
+			if (principal.Identity?.IsAuthenticated != true) return Results.Ok(new { isAuthenticated = false, accountSuspended = false, isAdministrator = false, email = "" });
 			var userId = GetUserId(principal);
 			var user = await users.FindByIdAsync(userId);
-			if (user is null || !user.EmailConfirmed) return Results.Ok(new { isAuthenticated = false, accountSuspended = false, email = "" });
-			if (user.IsSuspended) return Results.Ok(new { isAuthenticated = false, accountSuspended = true, email = "" });
+			if (user is null || !user.EmailConfirmed) return Results.Ok(new { isAuthenticated = false, accountSuspended = false, isAdministrator = false, email = "" });
+			if (user.IsSuspended) return Results.Ok(new { isAuthenticated = false, accountSuspended = true, isAdministrator = false, email = "" });
 			var onboardingComplete = await db.UserProfiles.Where(profile => profile.UserId == userId).Select(profile => profile.OnboardingComplete).SingleOrDefaultAsync();
-			return Results.Ok(new { isAuthenticated = true, accountSuspended = false, userId, email = user.Email ?? "", onboardingComplete });
+			return Results.Ok(new { isAuthenticated = true, accountSuspended = false, isAdministrator = administrators.Allows(user.Email), userId, email = user.Email ?? "", onboardingComplete });
 		}).AllowAnonymous();
 		app.MapPost("/api/session/logout", async (SignInManager<AppUser> signInManager) =>
 		{

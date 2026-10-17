@@ -98,6 +98,10 @@
 		<a class="nav-item premium-nav-link" href="/premium">Guides Premium</a>
 		@if (isAuthenticated)
 		{
+			@if (isAdministrator)
+			{
+				<a class="nav-item" href="/administration">Administration</a>
+			}
 			<a class="nav-item" href="/comptes-bloques">Membres bloqués</a>
 			<a class="nav-item" href="/compte/supprimer">Supprimer mon compte</a>
 		}
@@ -112,6 +116,10 @@
 			<a class="brand" href="/" aria-label="2gether, accueil"><span class="brand-mark" aria-hidden="true">2</span><span class="brand-wordmark"><strong>2gether</strong></span></a>
 			<button class="mobile-location" @onclick="ShowProfile" aria-label="Modifier mon secteur"><span class="location-pin"></span>@state.City</button>
 			<a class="premium-mobile-link" href="/premium">Premium</a>
+			@if (isAdministrator)
+			{
+				<a class="admin-mobile-link" href="/administration">Admin</a>
+			}
 		</header>
 
 		<div class="content-wrap">
@@ -410,6 +418,7 @@
 		return true;
 	}
 	private bool isAuthenticated;
+	private bool isAdministrator;
 	private string onboardingTopicSearch = "";
 	private string onboardingTopicCategory = "Toutes les catégories";
 	private int onboardingTopicLimit = 20;
@@ -663,6 +672,7 @@
 		{
 			if (isAuthenticated) await Http.PostAsync("/api/auth/logout", null);
 			isAuthenticated = false;
+			isAdministrator = false;
 			messageDrafts.Clear();
 			messageText = "";
 			chatProfilePhotos = [];
@@ -764,6 +774,7 @@
 			}
 
 			isAuthenticated = true;
+			isAdministrator = session.IsAdministrator;
 			state.AccountMode = accountMode;
 			state.OnboardingComplete = false;
 			onboardingPassword = "";
@@ -899,6 +910,7 @@
 			}
 			if (account?.IsAuthenticated != true) return;
 			isAuthenticated = true;
+			isAdministrator = account.IsAdministrator;
 			currentUserId = account.UserId;
 			state.AccountEmail = account.Email;
 			await LoadRemoteProfileAsync();
@@ -908,6 +920,7 @@
 		catch (HttpRequestException)
 		{
 			isAuthenticated = false;
+			isAdministrator = false;
 			state.OnboardingComplete = false;
 		}
 	}
@@ -1429,7 +1442,7 @@
 	private sealed class DeviceLocationResult { public bool Success { get; set; } public int ErrorCode { get; set; } public double? Latitude { get; set; } public double? Longitude { get; set; } public double? AccuracyMeters { get; set; } }
 	private sealed class AccountInfoResponse { public string Email { get; set; } = ""; }
 	private sealed class PasskeyStartResponse { public string OperationId { get; set; } = ""; public JsonElement Options { get; set; } }
-	private sealed class SessionResponse { public bool IsAuthenticated { get; set; } public bool AccountSuspended { get; set; } public string UserId { get; set; } = ""; public string Email { get; set; } = ""; public bool OnboardingComplete { get; set; } }
+	private sealed class SessionResponse { public bool IsAuthenticated { get; set; } public bool AccountSuspended { get; set; } public bool IsAdministrator { get; set; } public string UserId { get; set; } = ""; public string Email { get; set; } = ""; public bool OnboardingComplete { get; set; } }
 	private sealed class DirectMessageResponse { public Guid Id { get; set; } public string SenderId { get; set; } = ""; public string RecipientId { get; set; } = ""; public string Text { get; set; } = ""; public DateTimeOffset SentAt { get; set; } }
 	private sealed class ConversationSummaryResponse { public string OtherUserId { get; set; } = ""; public string DisplayName { get; set; } = ""; public string City { get; set; } = ""; public string LastMessage { get; set; } = ""; public DateTimeOffset LastSentAt { get; set; } }
 	private sealed class OwnProfileResponse

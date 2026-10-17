@@ -131,6 +131,7 @@ Configurer les variables d’environnement sur la plateforme d’hébergement, p
 | `DataProtection__KeysPath` | Chemin absolu vers un répertoire persistant et protégé; obligatoire en Production |
 | `ForwardedHeaders__KnownProxies__0` | Adresse IP du proxy inverse de confiance, si l’application est derrière un proxy; ajouter un index par proxy connu |
 | `Moderation__ModeratorEmails__0` | Adresse exacte d’un compte modérateur confirmé; ajouter `__1`, `__2`, etc. pour d’autres modérateurs |
+| `Administration__AdministratorEmails__0` | Adresse exacte d’un compte administrateur confirmé; ajouter `__1`, `__2`, etc. pour d’autres administrateurs |
 | `Stripe__SecretKey` | Clé API secrète Stripe `sk_live_…`, à enregistrer uniquement dans le coffre de secrets |
 | `Stripe__PremiumPriceId` | Identifiant `price_…` d’un prix actif, récurrent chaque mois et libellé en EUR |
 | `Stripe__WebhookSecret` | Secret de signature `whsec_…` de l’endpoint webhook correspondant à cette application |
@@ -156,7 +157,11 @@ Ne jamais réutiliser en Production un prix, une clé ou un secret de webhook de
 
 Toutes les mutations de l’API utilisent un jeton antiforgery transmis dans l’en-tête `X-CSRF-TOKEN`. Le client Blazor récupère ce jeton avant chaque requête qui modifie des données. Ne pas désactiver ce contrôle sur les nouveaux endpoints.
 
-L’accès à l’espace de modération (`/moderation`) est réservé aux comptes confirmés dont l’adresse correspond à une valeur `Moderation__ModeratorEmails__*`. Configurer ces adresses dans l’environnement protégé de l’hébergeur; ne jamais exposer cette liste dans le dépôt ou la laisser contrôlable par les utilisateurs. Le serveur refuse de démarrer en Production si aucune adresse de modérateur n’est configurée. Définir également une procédure de traitement et de conservation des signalements.
+L’accès à l’espace de modération (`/moderation`) est réservé aux comptes confirmés dont l’adresse correspond à une valeur `Moderation__ModeratorEmails__*`. L’administration (`/administration`) utilise une liste distincte `Administration__AdministratorEmails__*`; un modérateur n’obtient pas automatiquement des droits d’administration. Configurer les deux listes dans l’environnement protégé de l’hébergeur; ne jamais les exposer dans le dépôt ni les rendre contrôlables par les utilisateurs. Le serveur refuse de démarrer en Production sans au moins une adresse pour chaque liste.
+
+Le centre d’administration regroupe le tableau de bord, les liens vers la modération, les réglages Premium et le journal des changements. L’ouverture de nouvelles souscriptions est fermée par défaut; l’administrateur ne peut l’activer qu’après vérification d’une offre Stripe valide. La fermeture des nouvelles souscriptions ne coupe pas l’accès des abonnements déjà actifs et ne bloque pas leur résiliation. Les fonctions essentielles de rencontre restent gratuites. Aucun secret Stripe ou SMTP n’est éditable dans l’interface : ils restent dans le coffre de configuration. Les publicités ne sont pas encore intégrées et ne peuvent pas être activées dans cette version.
+
+Les changements administratifs de monétisation sont enregistrés dans un journal protégé et consultable par les administrateurs. Ce journal conserve l’identifiant du compte administrateur et le détail du changement; définir sa durée de conservation et les personnes qui peuvent le consulter. Définir également une procédure de traitement et de conservation des signalements et une revue périodique des listes d’accès administrateur/modérateur.
 
 ### Persistance et mises à jour
 

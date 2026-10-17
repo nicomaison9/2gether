@@ -42,6 +42,7 @@ public sealed class SecurityTests
         start.Environment["Email__Host"] = "smtp.2gether.invalid";
         start.Environment["Email__Port"] = "587";
         start.Environment["DataProtection__KeysPath"] = Path.Combine(temporaryDirectory, "keys");
+        start.Environment["Administration__AdministratorEmails__0"] = "admin@security.invalid";
         start.Environment["Stripe__SecretKey"] = "sk_live_configuration_test";
         start.Environment["Stripe__PremiumPriceId"] = "price_configuration_test";
         start.Environment["Stripe__WebhookSecret"] = "whsec_configuration_test";
@@ -54,6 +55,51 @@ public sealed class SecurityTests
             var output = await standardOutput + await standardError;
             Assert.NotEqual(0, server.ExitCode);
             Assert.Contains("Moderation:ModeratorEmails", output);
+        }
+        finally
+        {
+            if (!server.HasExited) server.Kill(true);
+            await server.WaitForExitAsync();
+            if (Directory.Exists(temporaryDirectory)) Directory.Delete(temporaryDirectory, true);
+        }
+    }
+
+    [Fact]
+    public async Task Production_requires_an_administrator_email()
+    {
+        var serverDirectory = FindServerDirectory();
+        var temporaryDirectory = Path.Combine(Path.GetTempPath(), $"2gether-production-admin-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryDirectory);
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = serverDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net10.0", "TwoGether.Server.dll"));
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
+        start.Environment["ASPNETCORE_URLS"] = "http://127.0.0.1:0";
+        start.Environment["TWOGETHER_DB_PATH"] = Path.Combine(temporaryDirectory, "production.db");
+        start.Environment["Email__Delivery"] = "Smtp";
+        start.Environment["Email__PublicOrigin"] = "https://2gether.invalid";
+        start.Environment["Email__FromAddress"] = "verification@2gether.invalid";
+        start.Environment["Email__Host"] = "smtp.2gether.invalid";
+        start.Environment["Email__Port"] = "587";
+        start.Environment["DataProtection__KeysPath"] = Path.Combine(temporaryDirectory, "keys");
+        start.Environment["Moderation__ModeratorEmails__0"] = "moderator@security.invalid";
+        start.Environment["Stripe__SecretKey"] = "sk_live_configuration_test";
+        start.Environment["Stripe__PremiumPriceId"] = "price_configuration_test";
+        start.Environment["Stripe__WebhookSecret"] = "whsec_configuration_test";
+        using var server = Process.Start(start)!;
+        try
+        {
+            var standardOutput = server.StandardOutput.ReadToEndAsync();
+            var standardError = server.StandardError.ReadToEndAsync();
+            await server.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            var output = await standardOutput + await standardError;
+            Assert.NotEqual(0, server.ExitCode);
+            Assert.Contains("Administration:AdministratorEmails", output);
         }
         finally
         {
@@ -238,6 +284,104 @@ public sealed class SecurityTests
             using var checkoutSubscriptionWebhook = await PostStripeWebhookAsync(member, checkoutSubscription, CreateStripeSignature(checkoutSubscription, webhookSecret));
             Assert.Equal(HttpStatusCode.NoContent, checkoutSubscriptionWebhook.StatusCode);
             Assert.True((await member.GetFromJsonAsync<JsonElement>("/api/billing/status")).GetProperty("hasPremium").GetBoolean());
+        }
+        finally
+        {
+            if (!server.HasExited) server.Kill(true);
+            await server.WaitForExitAsync();
+            SqliteConnection.ClearAllPools();
+            foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(databasePath + suffix);
+            if (Directory.Exists(mailDirectory)) Directory.Delete(mailDirectory, true);
+        }
+    }
+
+    [Fact]
+    public async Task Administration_monetization_controls_are_restricted_and_default_safe()
+    {
+        var serverDirectory = FindServerDirectory();
+        var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-administration-{Guid.NewGuid():N}.db");
+        var mailDirectory = databasePath + ".mail";
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        var address = new Uri($"http://127.0.0.1:{port}");
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = serverDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add(Path.Combine(serverDirectory, "bin", "Release", "net10.0", "TwoGether.Server.dll"));
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        start.Environment["ASPNETCORE_URLS"] = address.ToString();
+        start.Environment["TWOGETHER_DB_PATH"] = databasePath;
+        start.Environment["Email__Delivery"] = "PickupDirectory";
+        start.Environment["Email__PublicOrigin"] = address.ToString();
+        start.Environment["Email__FromAddress"] = "verification@2gether.invalid";
+        start.Environment["Email__PickupDirectory"] = mailDirectory;
+        start.Environment["Administration__AdministratorEmails__0"] = "admin@security.invalid";
+        start.Environment["Moderation__ModeratorEmails__0"] = "moderator@security.invalid";
+        using var server = Process.Start(start)!;
+        server.BeginOutputReadLine();
+        server.BeginErrorReadLine();
+        try
+        {
+            using var anonymous = CreateClient(address);
+            using var member = CreateClient(address);
+            using var moderator = CreateClient(address);
+            using var administrator = CreateClient(address);
+            await WaitForServerAsync(anonymous, server);
+            await CreateModerationAccountAsync(member, "member@security.invalid", mailDirectory, "Member");
+            await CreateModerationAccountAsync(moderator, "moderator@security.invalid", mailDirectory, "Moderator");
+            await CreateModerationAccountAsync(administrator, "admin@security.invalid", mailDirectory, "Administrator");
+            var databaseOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite($"Data Source={databasePath}")
+                .Options;
+            await using (var database = new AppDbContext(databaseOptions))
+            {
+                database.MonetizationSettings.Add(new MonetizationSettings
+                {
+                    Id = AdministrationApi.MonetizationSettingsId,
+                    PremiumSalesEnabled = true
+                });
+                await database.SaveChangesAsync();
+            }
+
+            var administratorSession = await administrator.GetFromJsonAsync<JsonElement>("/api/session");
+            Assert.True(administratorSession.GetProperty("isAdministrator").GetBoolean());
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/administration/monetization")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/api/administration/monetization")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await moderator.GetAsync("/api/administration/monetization")).StatusCode);
+
+            var overview = await administrator.GetFromJsonAsync<JsonElement>("/api/administration/overview");
+            Assert.Equal(3, overview.GetProperty("confirmedMembers").GetInt32());
+            Assert.True(overview.GetProperty("premiumSalesEnabled").GetBoolean());
+            Assert.False(overview.GetProperty("advertisingIntegrationAvailable").GetBoolean());
+            var settings = await administrator.GetFromJsonAsync<JsonElement>("/api/administration/monetization");
+            Assert.True(settings.GetProperty("coreFeaturesRemainFree").GetBoolean());
+            Assert.True(settings.GetProperty("premiumSalesEnabled").GetBoolean());
+            Assert.False(settings.GetProperty("advertisingEnabled").GetBoolean());
+            Assert.False(settings.GetProperty("advertisingIntegrationAvailable").GetBoolean());
+
+            using var closeSales = await administrator.PutAsJsonAsync(
+                "/api/administration/monetization",
+                new { PremiumSalesEnabled = false });
+            Assert.Equal(HttpStatusCode.OK, closeSales.StatusCode);
+            using var disabledOffer = await anonymous.GetAsync("/api/billing/offer");
+            Assert.Equal(HttpStatusCode.OK, disabledOffer.StatusCode);
+            Assert.False((await disabledOffer.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("available").GetBoolean());
+            using var checkout = await member.PostAsync("/api/billing/checkout", null);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, checkout.StatusCode);
+
+            using var enableWithoutStripe = await administrator.PutAsJsonAsync(
+                "/api/administration/monetization",
+                new { PremiumSalesEnabled = true });
+            Assert.Equal(HttpStatusCode.Conflict, enableWithoutStripe.StatusCode);
+            var auditEntries = await administrator.GetFromJsonAsync<JsonElement[]>("/api/administration/audit");
+            Assert.NotNull(auditEntries);
+            Assert.Single(auditEntries);
         }
         finally
         {

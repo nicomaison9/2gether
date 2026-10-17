@@ -27,10 +27,18 @@ public static class PremiumBillingApi
 	}
 
 	private static async Task<IResult> GetOfferAsync(
+		AppDbContext db,
 		StripeBillingService billing,
 		ILoggerFactory loggerFactory,
 		CancellationToken cancellationToken)
 	{
+		var salesEnabled = await db.MonetizationSettings.AsNoTracking()
+			.Where(settings => settings.Id == AdministrationApi.MonetizationSettingsId)
+			.Select(settings => settings.PremiumSalesEnabled)
+			.SingleOrDefaultAsync(cancellationToken);
+		if (!salesEnabled)
+			return Results.Ok(new PremiumOfferResponse(false, null, "eur", "month", 1));
+
 		try
 		{
 			return Results.Ok(await billing.GetOfferAsync(cancellationToken));
@@ -104,6 +112,12 @@ public static class PremiumBillingApi
 		ILoggerFactory loggerFactory,
 		HttpContext context)
 	{
+		var salesEnabled = await db.MonetizationSettings.AsNoTracking()
+			.Where(settings => settings.Id == AdministrationApi.MonetizationSettingsId)
+			.Select(settings => settings.PremiumSalesEnabled)
+			.SingleOrDefaultAsync(context.RequestAborted);
+		if (!salesEnabled)
+			return Results.Problem("Les nouvelles souscriptions Premium sont temporairement fermées.", statusCode: StatusCodes.Status503ServiceUnavailable);
 		if (!options.IsConfigured)
 			return Results.Problem("Les paiements Premium ne sont pas configurés.", statusCode: StatusCodes.Status503ServiceUnavailable);
 

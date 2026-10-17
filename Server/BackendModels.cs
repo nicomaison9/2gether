@@ -22,6 +22,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 	public DbSet<PremiumSubscription> PremiumSubscriptions => Set<PremiumSubscription>();
 	public DbSet<StripeWebhookReceipt> StripeWebhookReceipts => Set<StripeWebhookReceipt>();
 	public DbSet<PremiumCheckoutReservation> PremiumCheckoutReservations => Set<PremiumCheckoutReservation>();
+	public DbSet<MonetizationSettings> MonetizationSettings => Set<MonetizationSettings>();
+	public DbSet<AdministrativeAuditEntry> AdministrativeAuditEntries => Set<AdministrativeAuditEntry>();
 
 	protected override void OnModelCreating(ModelBuilder builder)
 	{
@@ -48,6 +50,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 		builder.Entity<PremiumCheckoutReservation>().HasKey(reservation => reservation.UserId);
 		builder.Entity<PremiumCheckoutReservation>().HasIndex(reservation => reservation.StripeSessionId).IsUnique();
 		builder.Entity<PremiumCheckoutReservation>().HasOne<AppUser>().WithMany().HasForeignKey(reservation => reservation.UserId).OnDelete(DeleteBehavior.Cascade);
+		builder.Entity<MonetizationSettings>().HasKey(settings => settings.Id);
+		builder.Entity<AdministrativeAuditEntry>().HasKey(entry => entry.Id);
 	}
 }
 
@@ -171,6 +175,23 @@ public sealed class PremiumCheckoutReservation
 	[MaxLength(450)] public string UserId { get; set; } = "";
 	[MaxLength(100)] public string? StripeSessionId { get; set; }
 	public DateTimeOffset ExpiresAt { get; set; }
+	public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class MonetizationSettings
+{
+	public int Id { get; set; } = 1;
+	public bool PremiumSalesEnabled { get; set; }
+	[MaxLength(450)] public string UpdatedByUserId { get; set; } = "";
+	public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class AdministrativeAuditEntry
+{
+	public long Id { get; set; }
+	[MaxLength(450)] public string ActorUserId { get; set; } = "";
+	[MaxLength(100)] public string Action { get; set; } = "";
+	[MaxLength(1000)] public string Details { get; set; } = "";
 	public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
