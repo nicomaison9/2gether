@@ -207,6 +207,28 @@ Ne pas ouvrir le service au public tant que les points bloquants suivants ne son
 
 Après cette vérification, ouvrir la bêta à un groupe restreint, traiter les retours et incidents avant d’élargir l’accès. Aucune clé Stripe réelle, valeur légale, sauvegarde de production ou configuration d’hébergeur n’est incluse dans le dépôt; ces étapes requièrent les comptes et choix de l’exploitant.
 
+#### Conduire la bêta gratuite
+
+- Démarrer dans une seule zone géographique et inviter progressivement un groupe que l’équipe de modération peut réellement accompagner. Expliquer aux participants qu’il s’agit d’une bêta, comment demander de l’aide et comment signaler un problème.
+- Garder les fonctions essentielles gratuites, les nouvelles souscriptions Premium fermées et les publicités désactivées pendant le pilote. Ne pas importer de contacts ni publier de profils à la place des participants.
+- Avant les invitations, nommer un opérateur et un modérateur joignables, fixer une cadence de revue des signalements et définir qui peut suspendre le service ou les inscriptions en cas d’incident.
+- Recueillir les retours par un canal annoncé à l’avance. Privilégier un questionnaire facultatif non relié au compte : difficultés d’inscription, clarté des profils, possibilité de trouver une première activité, fluidité mobile, accessibilité et sentiment de sécurité. Ne pas demander de détails intimes ni de copies de conversations.
+
+#### Mesure et décisions de lancement
+
+Avant l’ouverture, consigner les dates du pilote, les objectifs, les seuils de décision et la personne qui arbitre. Définir ces seuils avant de voir les résultats; ne pas confondre croissance des inscriptions et expérience réussie.
+
+| Sujet | Mesure prudente pendant le pilote | Limite actuelle |
+| --- | --- | --- |
+| Disponibilité | Contrôler `/api/health` et noter les incidents d’exploitation. | Le contrôle confirme l’API et SQLite, pas la délivrabilité SMTP ni la disponibilité de Stripe. |
+| Utilisabilité | Compter les réponses facultatives et anonymes au questionnaire; traiter les difficultés rapportées. | Ce retour est volontaire et ne mesure pas le comportement de tous les membres. |
+| Sécurité | Revoir la file de signalements à la cadence définie; noter le volume en attente et les délais de traitement sans exporter les profils. | Le tableau d’administration n’est pas un outil d’analyse de rétention. |
+| Retour des membres | Demander facultativement aux participants s’ils sont revenus et ce qui les y a incités ou freinés. | Aucune télémétrie de rétention ni de cohortes n’est actuellement intégrée. |
+
+Décider à l’avance des conditions de pause : incident de sécurité ou perte de données, échec de confirmation des comptes, signalements sans capacité de traitement, défaut de sauvegarde/restauration ou question réglementaire non résolue. En cas de pause, arrêter les invitations et les paiements, préserver les éléments nécessaires à l’enquête et informer les personnes concernées selon la procédure définie.
+
+Ne pas ajouter d’identifiants publicitaires, de suivi comportemental ou d’historique individuel pour mesurer la rétention pendant cette bêta. Une mesure produit automatisée nécessitera d’abord une revue juridique et vie privée, une information adaptée, une durée de conservation définie et une méthode de suppression testée. Les indicateurs agrégés du centre d’administration ne remplacent pas cette validation.
+
 ## 7. Passkeys, modération et limites
 
 - L’appareil vérifie localement l’empreinte, le visage ou le code ; le serveur reçoit une preuve WebAuthn et stocke la clé publique, jamais les données biométriques.
