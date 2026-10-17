@@ -163,6 +163,12 @@ Le centre d’administration regroupe le tableau de bord, les liens vers la mod�
 
 Les changements administratifs de monétisation sont enregistrés dans un journal protégé et consultable par les administrateurs. Ce journal conserve l’identifiant du compte administrateur et le détail du changement; définir sa durée de conservation et les personnes qui peuvent le consulter. Définir également une procédure de traitement et de conservation des signalements et une revue périodique des listes d’accès administrateur/modérateur.
 
+### Rétention configurable des messages
+
+Dans `/administration/conservation`, un administrateur peut régler la durée de conservation des messages privés entre 1 et 150 jours. La valeur initiale est de 30 jours, soit un mois conventionnel de 30 jours; la valeur et chaque changement sont persistés, et les changements sont inscrits au journal administratif.
+
+À l’échéance, les messages ne sont plus retournés par les API de conversation. Le service les supprime de SQLite au démarrage puis au plus tard lors de son prochain passage (toutes les 15 minutes). Raccourcir le délai masque donc immédiatement les messages déjà expirés; une suppression effectuée n’est pas annulée si le délai est ensuite rallongé. Ce réglage concerne uniquement les messages privés, pas les photos ni les signalements. Les copies existantes dans les sauvegardes suivent leur propre durée de conservation et ne sont pas effacées par ce réglage.
+
 ### Persistance et mises à jour
 
 - Le serveur applique les migrations EF Core au démarrage. Une nouvelle base est créée par la migration initiale; les migrations suivantes ne doivent pas supprimer de données sans procédure explicite.
@@ -231,18 +237,7 @@ Ne pas ajouter d’identifiants publicitaires, de suivi comportemental ou d’hi
 
 #### Liste personnelle avant ouverture
 
-Les valeurs marquées comme secrets doivent être saisies directement dans le coffre de l’hébergeur. Ne les envoie pas dans une conversation et ne les ajoute jamais au dépôt Git.
-
-| À ta charge | Informations à réunir et action | Vérification avant de continuer |
-| --- | --- | --- |
-| Hébergement et domaine | Choisir un hébergeur qui prend en charge .NET 10 et un stockage persistant; réserver un nom de domaine; créer une seule instance Staging avec HTTPS, DNS et proxy inverse configurés. Conserver l’adresse IP du proxy si l’application est derrière celui-ci. | `ASPNETCORE_ENVIRONMENT=Staging`, `ASPNETCORE_URLS`, `Email__PublicOrigin` et, si nécessaire, `ForwardedHeaders__KnownProxies__0`. L’origine publique doit être HTTPS et correspondre exactement au domaine WebAuthn. Ne pas multiplier les instances : les défis passkey sont en mémoire. |
-| Stockage et sauvegardes | Choisir des chemins persistants distincts pour SQLite et les clés Data Protection; définir qui sauvegarde, chiffre, conserve et restaure ces fichiers. Décider la durée de conservation ainsi que les objectifs de reprise. | `TWOGETHER_DB_PATH` et `DataProtection__KeysPath`. Réaliser une sauvegarde puis une restauration dans un environnement isolé; valider `/api/health`, la connexion, les profils, les photos et les messages. |
-| Courriels | Ouvrir un compte chez un fournisseur SMTP, vérifier le domaine expéditeur et publier ses enregistrements DNS SPF, DKIM et DMARC. Réunir l’hôte, le port, le mode TLS, l’identifiant, le mot de passe et l’adresse d’expédition. | `Email__Delivery=Smtp`, `Email__FromAddress`, `Email__Host`, `Email__Port`, `Email__ImplicitTls`, `Email__Username`, `Email__Password`. Tester confirmation de compte et récupération du mot de passe avec de vraies boîtes de test. Le mot de passe SMTP va dans le coffre de secrets. |
-| Comptes d’exploitation | Créer et confirmer les comptes qui auront les rôles distincts d’administrateur et de modérateur. Choisir les personnes joignables qui surveilleront le service et les signalements. | Définir `Administration__AdministratorEmails__0` et `Moderation__ModeratorEmails__0` dans la configuration protégée. Un compte modérateur n’est pas automatiquement administrateur. |
-| Stripe en mode test | Dans Stripe, créer le produit éditorial et son prix mensuel EUR, activer le portail client et configurer les informations fiscales; créer l’endpoint HTTPS `/api/billing/webhook` avec les cinq événements de la section Stripe. Prévoir un moyen de tester l’annulation et le renouvellement. | Dans le coffre de Staging : `Stripe__SecretKey` avec `sk_test_…`, `Stripe__PremiumPriceId` avec l’identifiant `price_…` et `Stripe__WebhookSecret` avec `whsec_…`. Vérifier Checkout, les webhooks et le portail avant toute ouverture. Ne jamais copier une clé réelle ou un secret dans ce document ou une conversation. |
-| Informations légales et vie privée | Fournir l’identité et les coordonnées de l’exploitant, le pays d’exploitation, les sous-traitants, les finalités et bases légales, les durées de conservation, les procédures d’exercice des droits et de signalement. Faire examiner les données de localisation et les champs d’affinité/orientation, ainsi que les conditions d’abonnement, de résiliation, de rétractation et de remboursement, par un professionnel compétent. | Publier uniquement des textes vérifiés et adaptés à l’activité réelle. Ne pas ouvrir les inscriptions publiques ni les paiements tant que ces informations ne sont pas validées. |
-| Bêta locale | Choisir une zone, recruter les participants, nommer l’opérateur et le modérateur, fixer la cadence de revue des signalements et annoncer un canal de support et de retours. Écrire avant le lancement les objectifs et critères de pause/go-no-go. | Garder Premium fermé et la publicité désactivée. Vérifier que l’équipe peut répondre aux incidents et traiter les signalements au rythme défini. |
-| Ouverture des ventes réelles | Après le pilote seulement, décider si l’offre Premium doit être ouverte et valider le prix TTC, la fiscalité et le parcours client. | Les clés `sk_live_…` et le webhook live doivent être configurés dans le coffre de Production. L’ouverture nécessite ensuite un administrateur connecté et une offre Stripe valide; les ventes restent fermées par défaut. |
+La liste détaillée des actions, des informations à réunir, des paramètres exacts et de leurs contrôles se trouve dans [MANUEL_Todolist.md](./MANUEL_Todolist.md). Les secrets doivent être saisis directement dans le coffre de l’hébergeur, jamais dans une conversation ni dans Git.
 
 ## 7. Passkeys, modération et limites
 

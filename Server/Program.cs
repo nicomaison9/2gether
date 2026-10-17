@@ -97,6 +97,7 @@ databasePath = Path.GetFullPath(databasePath);
 var databaseDirectory = Path.GetDirectoryName(databasePath) ?? builder.Environment.ContentRootPath;
 Directory.CreateDirectory(databaseDirectory);
 builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite($"Data Source={databasePath}"));
+builder.Services.AddHostedService<MessageRetentionCleanupService>();
 builder.Services.AddIdentityApiEndpoints<AppUser>(options =>
 {
 	options.User.RequireUniqueEmail = true;

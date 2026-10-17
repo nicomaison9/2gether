@@ -25,6 +25,7 @@
 				<a href="/administration" aria-current="page">Aperçu</a>
 				<a href="/moderation">Modération</a>
 				<a href="/administration/monetisation">Monétisation</a>
+				<a href="/administration/conservation">Conservation</a>
 			</nav>
 
 			@if (!string.IsNullOrWhiteSpace(feedback))
@@ -54,6 +55,11 @@
 						<strong>Monétisation</strong>
 						<span>Contrôler les nouvelles souscriptions et suivre les options prévues.</span>
 						<small>@(overview.PremiumSalesEnabled ? "Souscriptions Premium ouvertes" : "Souscriptions Premium fermées")</small>
+					</a>
+					<a class="admin-module-card" href="/administration/conservation">
+						<strong>Conservation</strong>
+						<span>Régler la durée de conservation des messages.</span>
+						<small>De 1 jour à 5 mois</small>
 					</a>
 					<article class="admin-module-card admin-module-card-static">
 						<strong>Contenus éditoriaux</strong>

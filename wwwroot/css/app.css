@@ -833,6 +833,11 @@ h1 em { color: var(--coral); }
 .admin-module-nav { border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 24px 0; padding-bottom: 14px; }
 .admin-module-nav a { color: var(--muted); font-size: 13px; font-weight: 600; text-decoration: none; }
 .admin-module-nav a[aria-current="page"] { color: var(--green); }
+.admin-retention-control { display: grid; gap: 10px; margin: 18px 0; }
+.admin-retention-control label { color: var(--muted); font-size: 13px; font-weight: 600; }
+.admin-retention-value { color: var(--green); font-size: 20px; font-weight: 700; }
+.admin-retention-range { accent-color: var(--green); cursor: pointer; width: 100%; }
+.admin-retention-scale { color: var(--muted); display: flex; font-size: 12px; justify-content: space-between; }
 .admin-module { border-top: 1px solid var(--line); margin-top: 26px; padding-top: 22px; }
 .admin-module h2 { font-family: Georgia, 'Times New Roman', serif; font-size: 23px; font-weight: 400; margin: 0 0 16px; }
 .admin-stat-grid, .admin-module-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }

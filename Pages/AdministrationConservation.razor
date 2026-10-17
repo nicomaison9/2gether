@@ -1,0 +1,166 @@
+@page "/administration/conservation"
+@using System.Net
+@using System.Net.Http.Json
+@inject HttpClient Http
+
+<PageTitle>Conservation - Administration 2gether</PageTitle>
+
+<main class="onboarding-shell">
+	<header class="onboarding-brand"><a class="brand-wordmark" href="/"><strong>2gether</strong></a></header>
+	<section class="onboarding-card admin-card" aria-labelledby="message-retention-title">
+		<a class="back-link" href="/administration">← Administration</a>
+		<p class="eyebrow">ADMINISTRATION · MESSAGES</p>
+		<h1 id="message-retention-title">Conservation des messages.</h1>
+		@if (isLoading)
+		{
+			<p role="status">Chargement du réglage…</p>
+		}
+		else if (!isAdministrator)
+		{
+			<p class="onboarding-feedback" role="alert">@feedback</p>
+		}
+		else if (settings is not null)
+		{
+			<nav class="admin-module-nav" aria-label="Administration">
+				<a href="/administration">Aperçu</a>
+				<a href="/moderation">Modération</a>
+				<a href="/administration/monetisation">Monétisation</a>
+				<a href="/administration/conservation" aria-current="page">Conservation</a>
+			</nav>
+
+			<section class="admin-module" aria-labelledby="message-retention-heading">
+				<h2 id="message-retention-heading">Durée de conservation</h2>
+				<p class="onboarding-copy">Le réglage s’applique à tous les messages privés. Un mois correspond à 30 jours.</p>
+				<div class="admin-retention-control">
+					<label for="message-retention-days">Conserver les messages pendant</label>
+					<output id="message-retention-value" class="admin-retention-value" for="message-retention-days">@FormatRetention(pendingRetentionDays)</output>
+					<input id="message-retention-days"
+						class="admin-retention-range"
+						type="range"
+						min="@settings.MinimumDays"
+						max="@settings.MaximumDays"
+						step="1"
+						@bind="pendingRetentionDays"
+						@bind:event="oninput"
+						aria-valuetext="@FormatRetention(pendingRetentionDays)" />
+					<div class="admin-retention-scale" aria-hidden="true">
+						<span>1 jour</span>
+						<span>5 mois</span>
+					</div>
+				</div>
+				<p class="admin-status-note">À l’échéance, un message n’est plus visible dans l’application puis est supprimé de la base au plus tard lors du prochain nettoyage (15 minutes). La suppression est définitive. Les sauvegardes suivent leur propre durée de conservation; les photos et les signalements ne sont pas concernés.</p>
+				@if (pendingRetentionDays != settings.RetentionDays)
+				{
+					<button class="onboarding-next admin-save-button" type="button" @onclick="SaveAsync" disabled="@isBusy">
+						@(isBusy ? "Enregistrement…" : "Enregistrer la durée")
+					</button>
+				}
+			</section>
+
+			@if (!string.IsNullOrWhiteSpace(feedback))
+			{
+				<p class="onboarding-feedback" role="status">@feedback</p>
+			}
+			@if (settings.UpdatedAt is DateTimeOffset updatedAt)
+			{
+				<p class="admin-last-updated">Dernière modification : @updatedAt.ToLocalTime().ToString("g")</p>
+			}
+		}
+	</section>
+</main>
+
+@code {
+	private const int DefaultRetentionDays = 30;
+	private bool isLoading = true;
+	private bool isAdministrator;
+	private bool isBusy;
+	private int pendingRetentionDays = DefaultRetentionDays;
+	private string feedback = "";
+	private AdministrationMessageRetentionResponse? settings;
+
+	private static string FormatRetention(int days) => days switch
+	{
+		1 => "1 jour",
+		30 => "1 mois (30 jours)",
+		60 or 90 or 120 or 150 => $"{days / 30} mois ({days} jours)",
+		_ => $"{days} jours"
+	};
+
+	protected override async Task OnInitializedAsync()
+	{
+		try
+		{
+			using var response = await Http.GetAsync("/api/administration/message-retention");
+			if (response.StatusCode == HttpStatusCode.Unauthorized)
+				feedback = "Connecte-toi avec un compte administrateur configuré.";
+			else if (response.StatusCode == HttpStatusCode.Forbidden)
+				feedback = "Ce compte n’est pas autorisé à gérer la conservation.";
+			else if (!response.IsSuccessStatusCode)
+				feedback = "Le réglage de conservation n’a pas pu être chargé.";
+			else
+			{
+				isAdministrator = true;
+				settings = await response.Content.ReadFromJsonAsync<AdministrationMessageRetentionResponse>();
+				pendingRetentionDays = settings?.RetentionDays ?? DefaultRetentionDays;
+			}
+		}
+		catch (HttpRequestException)
+		{
+			feedback = "Le serveur est indisponible. Réessaie dans un instant.";
+		}
+		finally
+		{
+			isLoading = false;
+		}
+	}
+
+	private async Task SaveAsync()
+	{
+		var originalSettings = settings;
+		if (isBusy || originalSettings is null || pendingRetentionDays == originalSettings.RetentionDays) return;
+		isBusy = true;
+		feedback = "";
+		try
+		{
+			using var response = await Http.PutAsJsonAsync(
+				"/api/administration/message-retention",
+				new UpdateAdministrationMessageRetentionRequest(pendingRetentionDays));
+			if (response.IsSuccessStatusCode)
+			{
+				settings = await response.Content.ReadFromJsonAsync<AdministrationMessageRetentionResponse>();
+				pendingRetentionDays = settings?.RetentionDays ?? originalSettings.RetentionDays;
+				feedback = "La durée de conservation a été enregistrée.";
+			}
+			else
+			{
+				var error = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+				feedback = error?.Error ?? "La durée n’a pas été enregistrée. Réessaie.";
+				pendingRetentionDays = originalSettings.RetentionDays;
+			}
+		}
+		catch (HttpRequestException)
+		{
+			pendingRetentionDays = originalSettings.RetentionDays;
+			feedback = "Le serveur est indisponible. Recharge la page avant de réessayer.";
+		}
+		finally
+		{
+			isBusy = false;
+		}
+	}
+
+	private sealed class AdministrationMessageRetentionResponse
+	{
+		public int RetentionDays { get; set; }
+		public int MinimumDays { get; set; }
+		public int MaximumDays { get; set; }
+		public DateTimeOffset? UpdatedAt { get; set; }
+	}
+
+	private sealed record UpdateAdministrationMessageRetentionRequest(int RetentionDays);
+
+	private sealed class ApiErrorResponse
+	{
+		public string? Error { get; set; }
+	}
+}

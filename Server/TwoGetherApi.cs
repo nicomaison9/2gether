@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -657,27 +658,45 @@ public static class TwoGetherApi
 		return Results.NoContent();
 	}
 
-	private static async Task<IResult> GetConversationAsync(string otherUserId, ClaimsPrincipal principal, AppDbContext db)
+	private static async Task<IResult> GetConversationAsync(
+		string otherUserId,
+		ClaimsPrincipal principal,
+		AppDbContext db,
+		CancellationToken cancellationToken)
 	{
 		var userId = GetUserId(principal);
 		if (otherUserId == userId) return Results.BadRequest();
 		if (await IsBlockedAsync(db, userId, otherUserId)
 			|| await db.Users.AnyAsync(user => user.Id == otherUserId && user.IsSuspended))
 			return Results.NotFound();
+		var expirationCutoff = await MessageRetentionPolicy.GetExpirationCutoffAsync(
+			db,
+			DateTimeOffset.UtcNow,
+			cancellationToken);
+		var expirationCutoffValue = expirationCutoff.ToString("O", CultureInfo.InvariantCulture);
 		var messages = await db.DirectMessages.FromSqlInterpolated($"""
 			SELECT * FROM "DirectMessages"
-			WHERE ("SenderId" = {userId} AND "RecipientId" = {otherUserId})
-				OR ("SenderId" = {otherUserId} AND "RecipientId" = {userId})
+			WHERE (("SenderId" = {userId} AND "RecipientId" = {otherUserId})
+				OR ("SenderId" = {otherUserId} AND "RecipientId" = {userId}))
+				AND julianday("SentAt") >= julianday({expirationCutoffValue})
 			ORDER BY "SentAt" DESC, "Id" DESC
 			LIMIT 500
-			""").AsNoTracking().ToListAsync();
+			""").AsNoTracking().ToListAsync(cancellationToken);
 		return Results.Ok(messages.OrderBy(message => message.SentAt).ThenBy(message => message.Id)
 			.Select(message => new DirectMessageResponse(message.Id, message.SenderId, message.RecipientId, message.Text, message.SentAt)));
 	}
 
-	private static async Task<IResult> GetConversationsAsync(ClaimsPrincipal principal, AppDbContext db)
+	private static async Task<IResult> GetConversationsAsync(
+		ClaimsPrincipal principal,
+		AppDbContext db,
+		CancellationToken cancellationToken)
 	{
 		var userId = GetUserId(principal);
+		var expirationCutoff = await MessageRetentionPolicy.GetExpirationCutoffAsync(
+			db,
+			DateTimeOffset.UtcNow,
+			cancellationToken);
+		var expirationCutoffValue = expirationCutoff.ToString("O", CultureInfo.InvariantCulture);
 		var latestMessages = await db.DirectMessages.FromSqlInterpolated($"""
 			SELECT "Id", "SenderId", "RecipientId", "Text", "SentAt"
 			FROM (
@@ -688,6 +707,7 @@ public static class TwoGetherApi
 					) AS "ConversationRank"
 				FROM "DirectMessages" AS message
 				WHERE (message."SenderId" = {userId} OR message."RecipientId" = {userId})
+					AND julianday(message."SentAt") >= julianday({expirationCutoffValue})
 					AND NOT EXISTS (
 						SELECT 1 FROM "UserBlocks" AS block
 						WHERE (block."BlockerId" = {userId}
@@ -702,9 +722,11 @@ public static class TwoGetherApi
 					)
 			)
 			WHERE "ConversationRank" = 1
-			""").AsNoTracking().ToListAsync();
+			""").AsNoTracking().ToListAsync(cancellationToken);
 		var otherUserIds = latestMessages.Select(item => item.SenderId == userId ? item.RecipientId : item.SenderId).ToList();
-		var otherProfiles = await db.UserProfiles.AsNoTracking().Where(profile => otherUserIds.Contains(profile.UserId)).ToDictionaryAsync(profile => profile.UserId);
+		var otherProfiles = await db.UserProfiles.AsNoTracking()
+			.Where(profile => otherUserIds.Contains(profile.UserId))
+			.ToDictionaryAsync(profile => profile.UserId, cancellationToken);
 		var summaries = latestMessages.Select(message =>
 		{
 			var otherUserId = message.SenderId == userId ? message.RecipientId : message.SenderId;

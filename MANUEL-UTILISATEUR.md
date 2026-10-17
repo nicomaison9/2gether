@@ -62,7 +62,7 @@ Dans **Mon profil > Gérer mes passkeys**, la liste montre les clés enregistré
 - **Découvrir :** parcourir les profils visibles et réduire ou élargir le rayon de recherche.
 - **Carte :** afficher la répartition approximative des profils. Une connexion Internet est nécessaire pour les tuiles de carte.
 - **Photos :** gérer l’avatar et les bibliothèques publiques et privées selon les limites indiquées dans l’application. Les demandes d’accès aux photos privées sont soumises à l’accord du propriétaire.
-- **Messages :** démarrer une conversation depuis un profil et retrouver les échanges dans l’onglet correspondant.
+- **Messages :** démarrer une conversation depuis un profil et retrouver les échanges dans l’onglet correspondant. L’administrateur règle la conservation entre 1 jour et 5 mois; par défaut, les messages sont gardés 30 jours (1 mois). À l’échéance, ils disparaissent de l’application puis sont supprimés définitivement de la base au plus tard lors du nettoyage suivant (15 minutes). Les sauvegardes suivent leur propre durée de conservation.
 - **Sécurité :** depuis le profil détaillé d’un membre, le signaler ou le bloquer. Un blocage masque les profils et conversations dans les deux sens et empêche les nouveaux messages. Gérer ou annuler un blocage depuis **Membres bloqués**.
 - **Aperçu visiteur :** vérifier la présentation du profil.
 

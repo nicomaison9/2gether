@@ -23,6 +23,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 	public DbSet<StripeWebhookReceipt> StripeWebhookReceipts => Set<StripeWebhookReceipt>();
 	public DbSet<PremiumCheckoutReservation> PremiumCheckoutReservations => Set<PremiumCheckoutReservation>();
 	public DbSet<MonetizationSettings> MonetizationSettings => Set<MonetizationSettings>();
+	public DbSet<MessageRetentionSetting> MessageRetentionSettings => Set<MessageRetentionSetting>();
 	public DbSet<AdministrativeAuditEntry> AdministrativeAuditEntries => Set<AdministrativeAuditEntry>();
 
 	protected override void OnModelCreating(ModelBuilder builder)
@@ -33,6 +34,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 		builder.Entity<ProfilePhoto>().HasIndex(photo => new { photo.OwnerId, photo.Visibility, photo.IsAvatar });
 		builder.Entity<PhotoAccessRequest>().HasIndex(request => new { request.OwnerId, request.RequesterId, request.CreatedAt });
 		builder.Entity<DirectMessage>().HasIndex(message => new { message.SenderId, message.RecipientId, message.SentAt });
+		builder.Entity<DirectMessage>().HasIndex(message => message.SentAt);
 		builder.Entity<PasskeyCredential>().HasKey(credential => credential.CredentialId);
 		builder.Entity<PasskeyCredential>().HasIndex(credential => credential.UserId);
 		builder.Entity<PasskeyCredential>().HasOne(credential => credential.User).WithMany().HasForeignKey(credential => credential.UserId).OnDelete(DeleteBehavior.Cascade);
@@ -51,6 +53,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : Ident
 		builder.Entity<PremiumCheckoutReservation>().HasIndex(reservation => reservation.StripeSessionId).IsUnique();
 		builder.Entity<PremiumCheckoutReservation>().HasOne<AppUser>().WithMany().HasForeignKey(reservation => reservation.UserId).OnDelete(DeleteBehavior.Cascade);
 		builder.Entity<MonetizationSettings>().HasKey(settings => settings.Id);
+		builder.Entity<MessageRetentionSetting>().HasKey(settings => settings.Id);
 		builder.Entity<AdministrativeAuditEntry>().HasKey(entry => entry.Id);
 	}
 }
@@ -182,6 +185,14 @@ public sealed class MonetizationSettings
 {
 	public int Id { get; set; } = 1;
 	public bool PremiumSalesEnabled { get; set; }
+	[MaxLength(450)] public string UpdatedByUserId { get; set; } = "";
+	public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class MessageRetentionSetting
+{
+	public int Id { get; set; } = MessageRetentionPolicy.SettingsId;
+	public int RetentionDays { get; set; } = MessageRetentionPolicy.DefaultDays;
 	[MaxLength(450)] public string UpdatedByUserId { get; set; } = "";
 	public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

@@ -320,9 +320,33 @@ namespace TwoGether.Server.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SentAt");
+
                     b.HasIndex("SenderId", "RecipientId", "SentAt");
 
                     b.ToTable("DirectMessages");
+                });
+
+            modelBuilder.Entity("TwoGether.Server.MessageRetentionSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RetentionDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("MessageRetentionSettings");
                 });
 
             modelBuilder.Entity("TwoGether.Server.MonetizationSettings", b =>

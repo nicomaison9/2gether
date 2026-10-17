@@ -6,6 +6,7 @@ Application de rencontres de quartier réalisée avec Blazor WebAssembly et ASP.
 
 - [Manuel d’utilisation](MANUEL-UTILISATEUR.md)
 - [Manuel d’installation](MANUEL-INSTALLATION.md)
+- [Liste des démarches restant à la charge de l’exploitant](MANUEL_Todolist.md)
 - [Notes de sécurité et contrôles avant déploiement](Server/SECURITY.md)
 
 ## Démarrage rapide (Windows PowerShell)
@@ -30,8 +31,8 @@ Ouvrir ensuite <http://localhost:5067>. En développement, les courriels sont é
 | `Server/Program.cs` | Configuration du serveur, d’Identity, de SQLite, du courrier, de WebAuthn et des limites de débit |
 | `Server/AuthenticationApi.cs` | Routes Identity et vérification serveur des cérémonies WebAuthn |
 | `Server/TwoGetherApi.cs` | API des profils, photos, localisations et messages |
-| `Server/AdministrationApi.cs` | Accès administrateur distinct, réglages de monétisation et journal des changements |
-| `Server/BackendModels.cs` | Modèles Identity, profils, passkeys, blocages et signalements |
+| `Server/AdministrationApi.cs` | Accès administrateur distinct, réglages de monétisation et de conservation, journal des changements |
+| `Server/BackendModels.cs` | Modèles Identity, profils, passkeys, blocages, signalements et conservation |
 | `Server/Migrations/` | Historique versionné du schéma SQLite |
 | `Server/VerificationEmailSender.cs` | Envoi SMTP ou écriture locale des courriels |
 | `wwwroot/js/passkeys.js` | Adaptation WebAuthn du navigateur ; aucune donnée biométrique n’est lue par l’application |

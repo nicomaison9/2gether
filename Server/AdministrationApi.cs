@@ -35,6 +35,12 @@ public sealed record AdministrationMonetizationResponse(
 	bool AdvertisingIntegrationAvailable,
 	DateTimeOffset? UpdatedAt);
 
+public sealed record AdministrationMessageRetentionResponse(
+	int RetentionDays,
+	int MinimumDays,
+	int MaximumDays,
+	DateTimeOffset? UpdatedAt);
+
 public sealed record AdministrationAuditResponse(
 	DateTimeOffset CreatedAt,
 	string ActorUserId,
@@ -42,6 +48,7 @@ public sealed record AdministrationAuditResponse(
 	string Details);
 
 public sealed record UpdateAdministrationMonetizationRequest(bool PremiumSalesEnabled);
+public sealed record UpdateAdministrationMessageRetentionRequest(int RetentionDays);
 
 public static class AdministrationApi
 {
@@ -56,6 +63,8 @@ public static class AdministrationApi
 		administration.MapGet("/overview", GetOverviewAsync);
 		administration.MapGet("/monetization", GetMonetizationAsync);
 		administration.MapPut("/monetization", UpdateMonetizationAsync);
+		administration.MapGet("/message-retention", GetMessageRetentionAsync);
+		administration.MapPut("/message-retention", UpdateMessageRetentionAsync);
 		administration.MapGet("/audit", GetAuditAsync);
 	}
 
@@ -167,5 +176,63 @@ public static class AdministrationApi
 				entry.Details))
 			.ToListAsync(cancellationToken);
 		return Results.Ok(entries);
+	}
+
+	private static async Task<IResult> GetMessageRetentionAsync(
+		AppDbContext db,
+		CancellationToken cancellationToken)
+	{
+		var settings = await db.MessageRetentionSettings.AsNoTracking()
+			.SingleOrDefaultAsync(item => item.Id == MessageRetentionPolicy.SettingsId, cancellationToken);
+		var retentionDays = settings?.RetentionDays ?? MessageRetentionPolicy.DefaultDays;
+		if (retentionDays is < MessageRetentionPolicy.MinimumDays or > MessageRetentionPolicy.MaximumDays)
+			throw new InvalidOperationException("The stored message retention period is outside the supported range.");
+
+		return Results.Ok(new AdministrationMessageRetentionResponse(
+			retentionDays,
+			MessageRetentionPolicy.MinimumDays,
+			MessageRetentionPolicy.MaximumDays,
+			settings?.UpdatedAt));
+	}
+
+	private static async Task<IResult> UpdateMessageRetentionAsync(
+		[FromBody] UpdateAdministrationMessageRetentionRequest request,
+		ClaimsPrincipal principal,
+		AppDbContext db,
+		HttpContext context)
+	{
+		if (request.RetentionDays is < MessageRetentionPolicy.MinimumDays or > MessageRetentionPolicy.MaximumDays)
+			return Results.BadRequest(new { error = $"La durée doit être comprise entre {MessageRetentionPolicy.MinimumDays} et {MessageRetentionPolicy.MaximumDays} jours." });
+
+		var actorUserId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+		if (string.IsNullOrWhiteSpace(actorUserId)) return Results.Unauthorized();
+
+		await using var transaction = await db.Database.BeginTransactionAsync(context.RequestAborted);
+		var settings = await db.MessageRetentionSettings.SingleOrDefaultAsync(
+			item => item.Id == MessageRetentionPolicy.SettingsId,
+			context.RequestAborted);
+		var previousDays = settings?.RetentionDays ?? MessageRetentionPolicy.DefaultDays;
+		if (previousDays != request.RetentionDays)
+		{
+			if (settings is null)
+			{
+				settings = new MessageRetentionSetting { Id = MessageRetentionPolicy.SettingsId };
+				db.MessageRetentionSettings.Add(settings);
+			}
+
+			settings.RetentionDays = request.RetentionDays;
+			settings.UpdatedAt = DateTimeOffset.UtcNow;
+			settings.UpdatedByUserId = actorUserId;
+			db.AdministrativeAuditEntries.Add(new AdministrativeAuditEntry
+			{
+				ActorUserId = actorUserId,
+				Action = "administration.message-retention",
+				Details = $"Message retention changed from {previousDays} to {request.RetentionDays} days."
+			});
+		}
+
+		await db.SaveChangesAsync(context.RequestAborted);
+		await transaction.CommitAsync(context.RequestAborted);
+		return await GetMessageRetentionAsync(db, context.RequestAborted);
 	}
 }

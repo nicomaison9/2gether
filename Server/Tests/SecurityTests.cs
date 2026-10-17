@@ -296,7 +296,7 @@ public sealed class SecurityTests
     }
 
     [Fact]
-    public async Task Administration_monetization_controls_are_restricted_and_default_safe()
+    public async Task Administration_controls_are_restricted_and_message_retention_is_enforced()
     {
         var serverDirectory = FindServerDirectory();
         var databasePath = Path.Combine(Path.GetTempPath(), $"2gether-administration-{Guid.NewGuid():N}.db");
@@ -333,9 +333,9 @@ public sealed class SecurityTests
             using var moderator = CreateClient(address);
             using var administrator = CreateClient(address);
             await WaitForServerAsync(anonymous, server);
-            await CreateModerationAccountAsync(member, "member@security.invalid", mailDirectory, "Member");
+            var memberId = await CreateModerationAccountAsync(member, "member@security.invalid", mailDirectory, "Member");
             await CreateModerationAccountAsync(moderator, "moderator@security.invalid", mailDirectory, "Moderator");
-            await CreateModerationAccountAsync(administrator, "admin@security.invalid", mailDirectory, "Administrator");
+            var administratorId = await CreateModerationAccountAsync(administrator, "admin@security.invalid", mailDirectory, "Administrator");
             var databaseOptions = new DbContextOptionsBuilder<AppDbContext>()
                 .UseSqlite($"Data Source={databasePath}")
                 .Options;
@@ -365,6 +365,103 @@ public sealed class SecurityTests
             Assert.False(settings.GetProperty("advertisingEnabled").GetBoolean());
             Assert.False(settings.GetProperty("advertisingIntegrationAvailable").GetBoolean());
 
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/administration/message-retention")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/api/administration/message-retention")).StatusCode);
+            var defaultRetention = await administrator.GetFromJsonAsync<JsonElement>("/api/administration/message-retention");
+            Assert.Equal(MessageRetentionPolicy.DefaultDays, defaultRetention.GetProperty("retentionDays").GetInt32());
+            Assert.Equal(MessageRetentionPolicy.MinimumDays, defaultRetention.GetProperty("minimumDays").GetInt32());
+            Assert.Equal(MessageRetentionPolicy.MaximumDays, defaultRetention.GetProperty("maximumDays").GetInt32());
+            Assert.Equal(JsonValueKind.Null, defaultRetention.GetProperty("updatedAt").ValueKind);
+
+            using var tooShortRetention = await administrator.PutAsJsonAsync(
+                "/api/administration/message-retention",
+                new { RetentionDays = 0 });
+            using var tooLongRetention = await administrator.PutAsJsonAsync(
+                "/api/administration/message-retention",
+                new { RetentionDays = MessageRetentionPolicy.MaximumDays + 1 });
+            Assert.Equal(HttpStatusCode.BadRequest, tooShortRetention.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, tooLongRetention.StatusCode);
+
+            using var setMinimumRetention = await administrator.PutAsJsonAsync(
+                "/api/administration/message-retention",
+                new { RetentionDays = MessageRetentionPolicy.MinimumDays });
+            Assert.Equal(HttpStatusCode.OK, setMinimumRetention.StatusCode);
+            Assert.Equal(
+                MessageRetentionPolicy.MinimumDays,
+                (await setMinimumRetention.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("retentionDays").GetInt32());
+
+            var messageNow = DateTimeOffset.UtcNow;
+            var expiredMessageId = Guid.NewGuid();
+            var recentMessageId = Guid.NewGuid();
+            await using (var messageDatabase = new AppDbContext(databaseOptions))
+            {
+                messageDatabase.DirectMessages.AddRange(
+                    new DirectMessage
+                    {
+                        Id = expiredMessageId,
+                        SenderId = memberId,
+                        RecipientId = administratorId,
+                        Text = "Expired message",
+                        SentAt = messageNow.AddDays(-2)
+                    },
+                    new DirectMessage
+                    {
+                        Id = recentMessageId,
+                        SenderId = memberId,
+                        RecipientId = administratorId,
+                        Text = "Recent message",
+                        SentAt = messageNow.AddHours(-12)
+                    });
+                await messageDatabase.SaveChangesAsync();
+            }
+
+            var visibleMessages = await member.GetFromJsonAsync<JsonElement[]>($"/api/messages/{administratorId}");
+            Assert.NotNull(visibleMessages);
+            Assert.Single(visibleMessages);
+            Assert.Equal("Recent message", visibleMessages[0].GetProperty("text").GetString());
+            var visibleConversations = await member.GetFromJsonAsync<JsonElement[]>("/api/conversations");
+            Assert.NotNull(visibleConversations);
+            Assert.Single(visibleConversations);
+            Assert.Equal("Recent message", visibleConversations[0].GetProperty("lastMessage").GetString());
+
+            var cleanupNow = DateTimeOffset.UtcNow.AddMinutes(1);
+            var boundaryMessageId = Guid.NewGuid();
+            var newlyExpiredMessageId = Guid.NewGuid();
+            await using (var cleanupDatabase = new AppDbContext(databaseOptions))
+            {
+                cleanupDatabase.DirectMessages.AddRange(
+                    new DirectMessage
+                    {
+                        Id = boundaryMessageId,
+                        SenderId = memberId,
+                        RecipientId = administratorId,
+                        Text = "At retention boundary",
+                        SentAt = cleanupNow.AddDays(-MessageRetentionPolicy.MinimumDays)
+                    },
+                    new DirectMessage
+                    {
+                        Id = newlyExpiredMessageId,
+                        SenderId = memberId,
+                        RecipientId = administratorId,
+                        Text = "Past retention boundary",
+                        SentAt = cleanupNow.AddDays(-MessageRetentionPolicy.MinimumDays).AddSeconds(-1)
+                    });
+                await cleanupDatabase.SaveChangesAsync();
+                Assert.Equal(2, await MessageRetentionPolicy.DeleteExpiredMessagesAsync(cleanupDatabase, cleanupNow));
+                Assert.False(await cleanupDatabase.DirectMessages.AnyAsync(message => message.Id == expiredMessageId));
+                Assert.False(await cleanupDatabase.DirectMessages.AnyAsync(message => message.Id == newlyExpiredMessageId));
+                Assert.True(await cleanupDatabase.DirectMessages.AnyAsync(message => message.Id == boundaryMessageId));
+                Assert.True(await cleanupDatabase.DirectMessages.AnyAsync(message => message.Id == recentMessageId));
+            }
+
+            using var setMaximumRetention = await administrator.PutAsJsonAsync(
+                "/api/administration/message-retention",
+                new { RetentionDays = MessageRetentionPolicy.MaximumDays });
+            Assert.Equal(HttpStatusCode.OK, setMaximumRetention.StatusCode);
+            var maximumRetention = await setMaximumRetention.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(MessageRetentionPolicy.MaximumDays, maximumRetention.GetProperty("retentionDays").GetInt32());
+            Assert.NotEqual(JsonValueKind.Null, maximumRetention.GetProperty("updatedAt").ValueKind);
+
             using var closeSales = await administrator.PutAsJsonAsync(
                 "/api/administration/monetization",
                 new { PremiumSalesEnabled = false });
@@ -381,7 +478,8 @@ public sealed class SecurityTests
             Assert.Equal(HttpStatusCode.Conflict, enableWithoutStripe.StatusCode);
             var auditEntries = await administrator.GetFromJsonAsync<JsonElement[]>("/api/administration/audit");
             Assert.NotNull(auditEntries);
-            Assert.Single(auditEntries);
+            Assert.Equal(3, auditEntries.Length);
+            Assert.Contains(auditEntries, entry => entry.GetProperty("action").GetString() == "administration.message-retention");
         }
         finally
         {
