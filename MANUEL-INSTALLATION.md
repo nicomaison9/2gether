@@ -95,6 +95,27 @@ Les tests créent leur propre base et leur propre dossier de courriels temporair
 
 Les tests ne remplacent pas une vérification sur appareil réel. Avant ouverture aux utilisateurs, tester la création, la connexion et la suppression d’une passkey avec les navigateurs et systèmes d’exploitation ciblés.
 
+### Automatiser les tests de non-régression avec Jenkins
+
+Jenkins peut exécuter automatiquement la même suite de contrôles à chaque changement et avant l’intégration d’une branche. Cela permet de repérer tôt une régression, mais ne remplace ni la revue du code, ni les essais sur appareils réels, ni une procédure de déploiement contrôlée. Le dépôt contient un `Jenkinsfile` déclaratif; la pipeline compile, lance les tests, contrôle les dépendances vulnérables et les migrations EF Core, puis archive une publication de validation. Elle ne déploie pas l’application et n’utilise aucun secret de production.
+
+#### Prérequis de l’agent Jenkins
+
+- Un contrôleur Jenkins maintenu à jour, avec les plugins **Pipeline** et **Git**.
+- Un agent Linux disponible avec l’étiquette `dotnet-10-linux`, Git et le SDK .NET 10.x dans son `PATH`. L’agent doit pouvoir accéder au dépôt Git et à NuGet.
+- Pour découvrir automatiquement les demandes de fusion GitHub, installer/configurer le plugin **GitHub Branch Source** et ses identifiants Jenkins. Un dépôt public n’a pas besoin d’identifiants de lecture.
+- Le contrôleur Jenkins doit être accessible en HTTPS depuis le fournisseur Git pour recevoir les webhooks. Ne pas exposer Jenkins sans authentification ni ouvrir son interface d’administration à Internet.
+
+#### Créer la pipeline
+
+1. Dans Jenkins, créer un élément **Multibranch Pipeline**.
+2. Ajouter la source Git du dépôt. Pour un dépôt privé, enregistrer les identifiants dans Jenkins et les sélectionner ici; ne pas les mettre dans le dépôt ou dans le `Jenkinsfile`.
+3. Activer la découverte des branches et, si disponible, des demandes de fusion. Le Jenkinsfile est à la racine et doit être référencé sous le nom `Jenkinsfile`.
+4. Lancer **Scan Multibranch Pipeline Now** pour vérifier le premier scan et le premier build.
+5. Configurer le webhook de l’hébergeur Git vers Jenkins afin de déclencher les scans/builds à chaque push et demande de fusion. Vérifier que le webhook est limité aux événements nécessaires et protégé par TLS.
+
+Chaque build échoue dès qu’une étape échoue. Les publications réussies sont archivées dans Jenkins comme artefacts de validation; leur conservation dépend de la politique des builds configurée. Elles ne sont pas un paquet de déploiement approuvé et ne doivent pas être envoyées en production sans vérifications complémentaires. Pour vérifier Jenkins après sa configuration, créer une branche de test, pousser un petit changement sans risque, puis confirmer qu’un build est lancé, que les tests apparaissent dans la console et qu’un artefact est archivé.
+
 ## 6. Publier l’application
 
 Construire une publication :

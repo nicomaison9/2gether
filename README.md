@@ -38,6 +38,7 @@ Ouvrir ensuite <http://localhost:5067>. En développement, les courriels sont é
 | `wwwroot/js/passkeys.js` | Adaptation WebAuthn du navigateur ; aucune donnée biométrique n’est lue par l’application |
 | `Server/Tests/` | Tests d’intégration des limites de sécurité, de la récupération et des passkeys |
 | `.github/workflows/ci.yml` | Build, tests, audit des dépendances et publication de validation |
+| `Jenkinsfile` | Pipeline Jenkins des tests de non-régression et de la publication de validation |
 
 ## Limite de déploiement à connaître
 

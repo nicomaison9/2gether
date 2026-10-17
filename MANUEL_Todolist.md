@@ -92,3 +92,13 @@ Pendant ce pilote, garder Premium fermé et la publicité désactivée. La publi
 - [ ] Ouvrir les ventes depuis le compte administrateur uniquement après vérification d’une offre Stripe valide.
 
 La Production exige aussi au moins un administrateur et un modérateur configurés, un SMTP fonctionnel, un domaine HTTPS et des clés Data Protection persistantes. L’ouverture des ventes Premium ne change pas l’accès aux fonctions essentielles gratuites.
+
+## 10. Mettre en service Jenkins
+
+- [ ] Installer ou choisir un contrôleur Jenkins maintenu, le protéger par HTTPS et limiter l’accès à ses comptes d’administration.
+- [ ] Fournir un agent Linux étiqueté `dotnet-10-linux`, avec Git, le SDK .NET 10.x et l’accès réseau au dépôt et à NuGet.
+- [ ] Créer une pipeline Multibranch pour le dépôt; enregistrer dans Jenkins les identifiants de lecture si le dépôt est privé.
+- [ ] Configurer la découverte des branches et demandes de fusion, puis le webhook du fournisseur Git pour déclencher les builds.
+- [ ] Pousser une branche de test et vérifier qu’un build échoue en cas de test rouge, qu’un build vert archive l’artefact de validation et qu’aucun déploiement n’est déclenché.
+
+Le dépôt fournit déjà le `Jenkinsfile`; les étapes ci-dessus nécessitent l’accès à l’infrastructure Jenkins et à la configuration du fournisseur Git. La pipeline lance la suite de non-régression et produit un artefact, mais ne remplace pas la revue de code, les essais manuels ou l’approbation du déploiement.
