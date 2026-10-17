@@ -26,6 +26,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .brand-wordmark { align-items: baseline; display: inline-flex; gap: 5px; white-space: nowrap; }
 .brand-wordmark strong { color: #15201a; font-size: 15px; font-weight: 800; }
 .nav-label { color: #93a198; font-size: 9px; font-weight: 700; letter-spacing: 1px; margin: 54px 0 12px 10px; }
+.account-nav-label { margin-top: 24px; }
 .side-nav { display: grid; gap: 5px; }
 .nav-item { align-items: center; background: transparent; border: 0; border-radius: 8px; color: #62766d; cursor: pointer; display: flex; font-size: 12px; font-weight: 600; gap: 12px; min-height: 43px; padding: 0 11px; text-align: left; transition: background .18s ease, color .18s ease; }
 .nav-item:hover { background: #f4f7f2; }

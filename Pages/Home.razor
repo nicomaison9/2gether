@@ -88,23 +88,26 @@
 			<span class="brand-mark" aria-hidden="true">2</span>
 			<span class="brand-wordmark"><strong>2gether</strong></span>
 		</a>
-		<div class="nav-label">FAIRE DES RENCONTRES</div>
-		<nav class="side-nav" aria-label="Navigation principale">
+		<div class="nav-label">RENCONTRES</div>
+		<nav class="side-nav" aria-label="Rencontres">
 			<button class="nav-item @(activePage is "discover" or "profile-detail" ? "selected" : "")" @onclick="ShowDiscover"><span class="nav-symbol discover-symbol"></span><span>Découvrir</span><span class="nav-count">@VisibleProfiles.Count()</span></button>
 			<button class="nav-item @(activePage == "map" ? "selected" : "")" @onclick="ShowMap"><span class="nav-symbol map-symbol"></span><span>Carte</span></button>
 			<button class="nav-item @(activePage == "messages" ? "selected" : "")" @onclick="ShowMessages"><span class="nav-symbol messages-symbol"></span><span>Messages</span><span class="nav-count">@state.Conversations.Count</span></button>
-			<button class="nav-item @(activePage == "profile" ? "selected" : "")" @onclick="ShowProfile"><span class="nav-symbol profile-symbol"></span><span>Mon profil</span></button>
+			<button class="nav-item @(activePage == "profile" ? "selected" : "")" @onclick="ShowProfile"><span class="nav-symbol profile-symbol"></span><span>Profil</span></button>
 		</nav>
-		<a class="nav-item premium-nav-link" href="/premium">Guides Premium</a>
+		<div class="nav-label account-nav-label">COMPTE</div>
+		<nav class="side-nav" aria-label="Compte">
+			<a class="nav-item premium-nav-link" href="/premium">Premium</a>
 		@if (isAuthenticated)
 		{
 			@if (isAdministrator)
 			{
 				<a class="nav-item" href="/administration">Administration</a>
 			}
-			<a class="nav-item" href="/comptes-bloques">Membres bloqués</a>
-			<a class="nav-item" href="/compte/supprimer">Supprimer mon compte</a>
+			<a class="nav-item" href="/comptes-bloques">Bloqués</a>
+			<a class="nav-item" href="/compte/supprimer">Supprimer le compte</a>
 		}
+		</nav>
 		<div class="sidebar-bottom">
 			<div class="privacy-note"><span class="privacy-mark">i</span><p><strong>À toi de choisir.</strong><br />Le GPS ne s'active qu'avec ton accord.</p></div>
 			<span class="demo-label">VERSION DE DÉMONSTRATION</span>
