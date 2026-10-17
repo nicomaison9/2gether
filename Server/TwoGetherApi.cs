@@ -15,7 +15,10 @@ public static class TwoGetherApi
 
 	public static void MapTwoGetherApi(this WebApplication app)
 	{
-		app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
+		app.MapGet("/api/health", async (AppDbContext db, CancellationToken cancellationToken) =>
+			await db.Database.CanConnectAsync(cancellationToken)
+				? Results.Ok(new { status = "ok" })
+				: Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
 		app.MapGet("/api/registration-options", (EmailDeliveryOptions options) => Results.Ok(new { localEmailDelivery = options.Delivery == "PickupDirectory" }));
 		app.MapGet("/api/session", async (ClaimsPrincipal principal, AppDbContext db, UserManager<AppUser> users) =>
 		{

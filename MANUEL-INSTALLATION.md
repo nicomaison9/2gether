@@ -143,6 +143,8 @@ Les adresses transmises (`X-Forwarded-For` et `X-Forwarded-Proto`) ne sont prise
 
 La facturation est obligatoire en Production : le serveur refuse de démarrer si les trois variables Stripe ci-dessus ne sont pas renseignées ensemble. En Production, seule une clé `sk_live_…` est acceptée ; en développement, utiliser exclusivement la clé `sk_test_…`, un prix et un webhook de test. Sans ces trois variables en développement, les paiements restent désactivés.
 
+Pour une préproduction accessible sur Internet, utiliser `ASPNETCORE_ENVIRONMENT=Staging`, une origine HTTPS, SMTP réel et des identifiants Stripe de test. Les clés `sk_test_…` sont refusées en `Production`; ne pas contourner ce garde-fou pour effectuer un essai. Définir aussi explicitement les chemins persistants de base et de clés Data Protection en Staging.
+
 Dans le tableau de bord Stripe :
 
 1. Créer le produit éditorial Premium et son prix récurrent mensuel en EUR, puis renseigner son identifiant `price_…`. L’application affiche le montant Stripe configuré et active la collecte de taxe automatique au Checkout ; configurer les informations fiscales, l’immatriculation et le comportement fiscal du prix dans Stripe avant toute vente.
@@ -173,7 +175,32 @@ L’accès à l’espace de modération (`/moderation`) est réservé aux compte
 - Stocker durablement et protéger la base, les sauvegardes et les clés ASP.NET Core Data Protection. Sans clés Data Protection persistantes, les cookies et jetons peuvent devenir invalides après redémarrage ou changement d’instance.
 - Limiter strictement les permissions de lecture/écriture de la base, des clés et des courriels de test. Les clés publiques WebAuthn ne sont pas des clés secrètes, mais restent des données de compte à protéger.
 - Configurer SPF, DKIM et DMARC pour le domaine d’expédition. Tester la délivrabilité, les liens HTTPS et le fonctionnement de la récupération avant la mise en service.
-- Prévoir surveillance, quotas disque, rotation/sauvegarde de la base et procédure de restauration.
+- Prévoir surveillance, quotas disque, rotation/sauvegarde de la base et procédure de restauration. Le contrôle `/api/health` vérifie maintenant la connectivité SQLite et répond `503` si la base est inaccessible.
+
+### Réaliser et vérifier une sauvegarde
+
+L’application conserve les profils, messages, abonnements et photos dans SQLite. Les clés Data Protection se trouvent dans un répertoire distinct; sauvegarder les deux ensembles, chiffrer la sauvegarde et limiter son accès aux opérateurs habilités.
+
+Pour une sauvegarde simple et cohérente sur le déploiement mono-instance actuel :
+
+1. Arrêter proprement le serveur (ou le service hébergeant l’application) et attendre la fin du processus afin que SQLite ferme sa base et termine ses écritures WAL.
+2. Copier le fichier pointé par `TWOGETHER_DB_PATH` ainsi que tout le répertoire `DataProtection__KeysPath` vers le stockage de sauvegarde chiffré. Inclure le fichier de base complet, qui contient aussi les photos.
+3. Vérifier que les deux copies existent, noter la date et protéger les permissions. Ne jamais copier une sauvegarde ou une base de production dans le dépôt Git.
+4. Redémarrer le serveur et vérifier `/api/health`, la connexion, les profils et les photos.
+
+Pour tester une restauration, utiliser un environnement isolé : arrêter son serveur, conserver une copie de la base de test à remplacer, restaurer ensemble une sauvegarde de base et son jeu de clés associé dans les chemins configurés, redémarrer, puis vérifier `/api/health`, l’authentification, les photos et l’accès aux messages. Ne pas expérimenter la restauration sur la seule copie de production. Si le fournisseur impose une sauvegarde à chaud, utiliser un mécanisme SQLite cohérent avec WAL plutôt qu’une simple copie du fichier pendant que le serveur écrit.
+
+### Porte de préproduction et bêta limitée
+
+Ne pas ouvrir le service au public tant que les points bloquants suivants ne sont pas validés et consignés par l’exploitant :
+
+- **Stripe en mode test :** configurer un prix mensuel EUR, le portail client, la taxe automatique et les cinq événements webhook indiqués plus haut. Tester souscription, arrivée du webhook avant/après le retour navigateur, notification dupliquée, expiration du Checkout, renouvellement, résiliation et suppression de compte. Vérifier que l’accès Premium ne s’ouvre qu’après un webhook valide et qu’une annulation ne prolonge pas indûment l’accès. Ne passer en mode live qu’après validation fiscale et légale par l’exploitant.
+- **Parcours utilisateurs :** faire tester par un petit groupe contrôlé la création et confirmation de compte, récupération du mot de passe, passkeys sur de vrais appareils, modification du profil, géolocalisation facultative, photos publiques/privées, demandes d’accès, blocage, signalement et modération. Vérifier qu’un refus d’accès à la localisation ou à la biométrie laisse une autre voie d’usage.
+- **Exploitation :** exécuter la suite Release, vérifier le contrôle de santé, tester l’envoi SMTP réel, confirmer la persistance des clés et répéter une restauration sur un environnement isolé. Définir un opérateur joignable, un canal de remontée des incidents et une procédure de suspension/réactivation des comptes.
+- **Informations et conformité :** compléter avant inscription publique l’identité et les coordonnées de l’exploitant, l’hébergement, les finalités et bases légales, les durées de conservation, les destinataires/sous-traitants (dont courrier, cartographie et Stripe), l’exercice des droits, la procédure de signalement et les conditions Premium (prix TTC applicable, renouvellement, résiliation, rétractation/remboursement). Faire examiner spécifiquement les données de localisation et les champs liés aux affinités/orientations par un professionnel compétent; ne pas publier de texte juridique non vérifié.
+- **Limite d’architecture :** garder une seule instance et une base locale SQLite tant que les défis WebAuthn sont stockés en mémoire. Avant de multiplier les instances, introduire et tester un stockage partagé atomique pour les défis, une persistance adaptée et des limites de débit distribuées.
+
+Après cette vérification, ouvrir la bêta à un groupe restreint, traiter les retours et incidents avant d’élargir l’accès. Aucune clé Stripe réelle, valeur légale, sauvegarde de production ou configuration d’hébergeur n’est incluse dans le dépôt; ces étapes requièrent les comptes et choix de l’exploitant.
 
 ## 7. Passkeys, modération et limites
 

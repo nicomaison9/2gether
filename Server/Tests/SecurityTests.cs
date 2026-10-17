@@ -174,6 +174,70 @@ public sealed class SecurityTests
             Assert.Equal(HttpStatusCode.NoContent, cancellationWebhook.StatusCode);
             Assert.False((await member.GetFromJsonAsync<JsonElement>("/api/billing/status")).GetProperty("hasPremium").GetBoolean());
             Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/api/premium/content")).StatusCode);
+
+            var databaseOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite($"Data Source={databasePath}")
+                .Options;
+            await using (var database = new AppDbContext(databaseOptions))
+            {
+                database.PremiumCheckoutReservations.Add(new PremiumCheckoutReservation
+                {
+                    UserId = userId,
+                    StripeSessionId = "cs_test_expired",
+                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(20)
+                });
+                await database.SaveChangesAsync();
+            }
+
+            var expiredCheckout = CreateCheckoutEvent(
+                "evt_premium_checkout_expired",
+                "checkout.session.expired",
+                userId,
+                "cs_test_expired",
+                null,
+                created + 20);
+            using var expiredWebhook = await PostStripeWebhookAsync(member, expiredCheckout, CreateStripeSignature(expiredCheckout, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, expiredWebhook.StatusCode);
+            Assert.False((await member.GetFromJsonAsync<JsonElement>("/api/billing/status")).GetProperty("checkoutPending").GetBoolean());
+
+            await using (var database = new AppDbContext(databaseOptions))
+            {
+                database.PremiumCheckoutReservations.Add(new PremiumCheckoutReservation
+                {
+                    UserId = userId,
+                    StripeSessionId = "cs_test_completed",
+                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(20)
+                });
+                await database.SaveChangesAsync();
+            }
+
+            var completedCheckout = CreateCheckoutEvent(
+                "evt_premium_checkout_completed",
+                "checkout.session.completed",
+                userId,
+                "cs_test_completed",
+                "sub_checkout",
+                created + 30);
+            using var completedWebhook = await PostStripeWebhookAsync(member, completedCheckout, CreateStripeSignature(completedCheckout, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, completedWebhook.StatusCode);
+            using var duplicateCheckoutWebhook = await PostStripeWebhookAsync(member, completedCheckout, CreateStripeSignature(completedCheckout, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, duplicateCheckoutWebhook.StatusCode);
+            var pendingStatus = await member.GetFromJsonAsync<JsonElement>("/api/billing/status");
+            Assert.False(pendingStatus.GetProperty("hasPremium").GetBoolean());
+            Assert.True(pendingStatus.GetProperty("subscriptionPending").GetBoolean());
+            Assert.False(pendingStatus.GetProperty("checkoutPending").GetBoolean());
+
+            var checkoutSubscription = CreateSubscriptionEvent(
+                "evt_premium_checkout_active",
+                "customer.subscription.created",
+                userId,
+                "active",
+                created + 40,
+                periodEnd,
+                "sub_checkout");
+            using var checkoutSubscriptionWebhook = await PostStripeWebhookAsync(member, checkoutSubscription, CreateStripeSignature(checkoutSubscription, webhookSecret));
+            Assert.Equal(HttpStatusCode.NoContent, checkoutSubscriptionWebhook.StatusCode);
+            Assert.True((await member.GetFromJsonAsync<JsonElement>("/api/billing/status")).GetProperty("hasPremium").GetBoolean());
         }
         finally
         {
@@ -735,7 +799,8 @@ public sealed class SecurityTests
         string userId,
         string status,
         long created,
-        long currentPeriodEnd) =>
+        long currentPeriodEnd,
+        string subscriptionId = "sub_test_premium") =>
         JsonSerializer.Serialize(new
         {
             id = eventId,
@@ -746,7 +811,7 @@ public sealed class SecurityTests
             {
                 @object = new
                 {
-                    id = "sub_test_premium",
+                    id = subscriptionId,
                     @object = "subscription",
                     customer = "cus_test_premium",
                     status,
@@ -765,6 +830,37 @@ public sealed class SecurityTests
                             }
                         }
                     }
+                }
+            },
+            livemode = false,
+            pending_webhooks = 1,
+            request = new { id = (string?)null, idempotency_key = (string?)null },
+            type = eventType
+        });
+
+    private static string CreateCheckoutEvent(
+        string eventId,
+        string eventType,
+        string userId,
+        string sessionId,
+        string? subscriptionId,
+        long created) =>
+        JsonSerializer.Serialize(new
+        {
+            id = eventId,
+            @object = "event",
+            api_version = "2025-03-31.basil",
+            created,
+            data = new
+            {
+                @object = new
+                {
+                    id = sessionId,
+                    @object = "checkout.session",
+                    client_reference_id = userId,
+                    customer = "cus_test_premium",
+                    subscription = subscriptionId,
+                    mode = "subscription"
                 }
             },
             livemode = false,
