@@ -99,7 +99,7 @@ La Production exige aussi au moins un administrateur et un modérateur configur�
 - [ ] Fournir un agent Linux étiqueté `dotnet-10-linux-playwright`, avec Git, le SDK .NET 10.x, PowerShell 7 (`pwsh`), les dépendances système de Chromium et l’accès réseau au dépôt et à NuGet.
 - [ ] Créer une pipeline Multibranch pour le dépôt; enregistrer dans Jenkins les identifiants de lecture si le dépôt est privé.
 - [ ] Configurer la découverte des branches et demandes de fusion, puis le webhook du fournisseur Git pour déclencher les builds.
-- [ ] Pousser les commits locaux vers le dépôt distant après revue, puis confirmer que GitHub Actions exécute le workflow `Build and test` sur la branche cible.
+- [x] Pousser les commits locaux vers `main` après revue et confirmer GitHub Actions : workflow [Build and test #8](https://github.com/nicomaison9/2gether/actions/runs/39086263268) réussi sur `b54e57a` le 18/10/2026.
 - [ ] Pousser une branche de test et vérifier qu’un build Jenkins échoue en cas de test rouge, que les parcours Chromium (récupération du compte et conservation administrateur) s’exécutent, qu’un build vert archive l’artefact de validation et qu’aucun déploiement n’est déclenché.
 
 Le dépôt fournit déjà le `Jenkinsfile` et les tests de non-régression; les étapes ci-dessus nécessitent l’accès à l’infrastructure Jenkins, au dépôt distant et à la configuration du fournisseur Git. La pipeline lance la suite de non-régression et produit un artefact, mais ne remplace pas la revue de code, les essais manuels ou l’approbation du déploiement.
