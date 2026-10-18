@@ -45,6 +45,48 @@ public sealed class BrowserRegressionTests
     }
 
     [Fact]
+    public async Task Password_recovery_flow_uses_email_code_to_change_password()
+    {
+        const string email = "recovery@security.invalid";
+        const string newPassword = "New-security-password-123";
+        await using var server = await LocalTestServer.StartAsync();
+        using (var registrationClient = CreateTestClient(server.Address, out _))
+            await CreateConfirmedAccountAsync(registrationClient, email, server.MailDirectory);
+
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
+        var page = await browser.NewPageAsync();
+        await page.GotoAsync(new Uri(server.Address, "/mot-de-passe-oublie").ToString());
+        await page.Locator("#recovery-email").FillAsync(email);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Envoyer un code de récupération" }).ClickAsync();
+
+        var feedback = page.Locator("p[role='status']").Last;
+        await feedback.WaitForAsync();
+        Assert.Contains("Si un compte confirmé correspond à cette adresse", await feedback.InnerTextAsync(), StringComparison.Ordinal);
+        await page.Locator("#recovery-code").WaitForAsync();
+
+        using var recoveryMessage = Directory.GetFiles(server.MailDirectory, "*.eml")
+            .Select(path => MimeMessage.Load(path))
+            .Single(message => message.Subject == "Récupération de ton compte 2gether"
+                && message.To.Mailboxes.Any(mailbox => mailbox.Address == email));
+        var codeMatch = Regex.Match(recoveryMessage.TextBody ?? "", @"Ton code de récupération 2gether est\s*:\s*(?<code>\S+)");
+        Assert.True(codeMatch.Success, "The recovery email did not contain a reset code.");
+
+        await page.Locator("#recovery-code").FillAsync(codeMatch.Groups["code"].Value);
+        await page.Locator("#recovery-new-password").FillAsync(newPassword);
+        await page.Locator("#recovery-confirm-password").FillAsync(newPassword);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Modifier mon mot de passe" }).ClickAsync();
+        await feedback.WaitForAsync();
+        Assert.Contains("Ton mot de passe a été modifié.", await feedback.InnerTextAsync(), StringComparison.Ordinal);
+
+        using var loginClient = CreateTestClient(server.Address, out _);
+        using var login = await loginClient.PostAsJsonAsync(
+            "/api/auth/login?useCookies=true",
+            new { Email = email, Password = newPassword });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+    }
+
+    [Fact]
     public async Task Administrator_can_set_and_reload_message_retention_at_both_limits()
     {
         const string email = "admin@security.invalid";
